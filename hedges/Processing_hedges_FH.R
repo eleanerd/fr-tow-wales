@@ -279,7 +279,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       narrow_parts2$id <- c(1:nrow(narrow_parts2))
 
       narrow_parts2$area_m <- narrow_parts2 %>%
-        st_area() %>%%
+        st_area() %>%
         units::drop_units()
 
       narrow_parts2 <- narrow_parts2 %>% filter(area_m >= 20)
@@ -289,16 +289,26 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
         next()
       }
       #plot(narrow_parts$x, add = T, col = 'blue')
-      
+
       # Smooth the poly
-      narrow_parts <- smooth(narrow_parts2, method = "ksmooth", smoothness = 15) %>% st_make_valid()
+      narrow_parts <- smooth(
+        narrow_parts2,
+        method = "ksmooth",
+        smoothness = 15
+      ) %>%
+        st_make_valid()
+
       narrow_parts <- st_simplify(
         narrow_parts,
         dTolerance = 0.05,
-        preserveTopology = TRUE)
+        preserveTopology = TRUE
+      )
 
       skel_dense <- centerline::cnt_skeleton(narrow_parts, keep = 1.5)
-      skel_cent <- centerline::cnt_path_guess(input = narrow_parts, skeleton = skel_dense)
+      skel_cent <- centerline::cnt_path_guess(
+        input = narrow_parts,
+        skeleton = skel_dense
+      )
       skel_cent$cnt_length <- as.numeric(st_length(skel_cent))
       skel_cent <- skel_cent %>% filter(cnt_length >= 20)
 
@@ -321,27 +331,30 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       other_dat <- filtered_skel_cent %>% st_drop_geometry()
 
-      narrow_parts$lar = st_length(st_boundary(narrow_parts)) / st_area(narrow_parts) %>% units::drop_units()
+      narrow_parts$lar = st_length(st_boundary(narrow_parts)) / st_area(narrow_parts) %>%units::drop_units()
       hedges_sel <- filter(narrow_parts, id %in% filtered_skel_cent$id)
 
       if (dim(filtered_skel_cent)[1] == 0) {
         next()
       }
 
-      mbc_a <- lwgeom::st_minimum_bounding_circle(hedges_sel) %>% st_area() %>% units::drop_units()
+      mbc_a <- lwgeom::st_minimum_bounding_circle(hedges_sel) %>%
+        st_area() %>%
+        units::drop_units()
       mbc_p <- hedges_sel$area_m/mbc_a * 100
       hedges_sel$mbcp <- mbc_p
-      hedges_sel <- merge(hedges_sel, other_dat, by = 'id')
+      hedges_sel <- merge(hedges_sel, other_dat, by = "id")
 
-      # filter hedges 
-      # Calculate the adjusted centre line length (estimated at 8% over true centre line length, possible more like 10-12%, but using 8% as conservative)
+      # filter hedges
+      # Calculate the adjusted centre line length
+      # Estimated at 8% over true centre line length, possible more like 10-12%, but using 8% as conservative
       hedges_sel$cnt_len_adj <- hedges_sel$cnt_length * 0.92
 
       # % of hedges to be removed
-      dim(hedges_sel[hedges_sel$cnt_len_adj < 20,])[1]/dim(hedges_sel)[1]*100
+      dim(hedges_sel[hedges_sel$cnt_len_adj < 20, ])[1] / dim(hedges_sel)[1] * 100
 
-      # remove these 
-      hedges_sel <- hedges_sel[hedges_sel$cnt_len_adj >= 20,]
+      # remove these
+      hedges_sel <- hedges_sel[hedges_sel$cnt_len_adj >= 20, ]
 
       # get max rectangle area
       hedges_sel$max_rec_area  <-max_rectangle_area(hedges_sel$cnt_len_adj)
@@ -350,35 +363,51 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       hedges_sel$max_area_perc <- hedges_sel$area_m.x / hedges_sel$max_rec_area * 100
 
       # remove those with an area over 100.
-      hedges_sel <- hedges_sel[hedges_sel$max_area_perc < 100,]
+      hedges_sel <- hedges_sel[hedges_sel$max_area_perc < 100, ]
 
       # remove those with mbcp > 30%
-      hedges_sel <- hedges_sel[hedges_sel$mbcp < 30,]
-
+      hedges_sel <- hedges_sel[hedges_sel$mbcp < 30, ]
 
       hedges <- rbind(hedges, hedges_sel)
 
       setTxtProgressBar(pb, pol)
     }
+
     close(pb)
 
+    # Save outputs
+    # Save hedges as GPKG
+    # Save CHM with hedges masked out
+    # Save classified raster with hedges masked out
     if (!is.null(hedges) && nrow(hedges) > 0) {
-      st_write(hedges, glue("Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
+      st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
 
-      chm_filtered <- mask(chm_full_crop, hedges, inverse=TRUE)
-      writeRaster(chm_filtered, glue("Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
+      chm_filtered <- mask(chm_full_crop, hedges, inverse = TRUE)
+      writeRaster(chm_filtered,
+                  glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+                  overwrite = TRUE)
 
-      filt_max_class_filt <- mask(filt_max_class, hedges, inverse=TRUE)
-      writeRaster(filt_max_class_filt, glue("Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
+      filt_max_class_filt <- mask(filt_max_class, hedges, inverse = TRUE)
+      writeRaster(filt_max_class_filt,
+                  glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
+                  overwrite = TRUE)
 
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      writeRaster(chm_full_crop, glue("Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
-      writeRaster(filt_max_class, glue("Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
+      writeRaster(chm_full_crop,
+                  glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+                  overwrite = TRUE)
+      writeRaster(filt_max_class,
+                  glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
+                  overwrite = TRUE)
     }
 
-    file.remove(glue('Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif'))
-    file.remove(glue("Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"))
+    file.remove(
+      glue("0_VOM/Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif")
+    )
+    file.remove(
+      glue("0_VOM/Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
+    )
 
   }
 }
