@@ -11,11 +11,6 @@
 rm(list = ls())
 gc()
 
-wd <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/3_Test_Square"
-vom_file <- 'VOM/SS79_VOM_with_NFI.tif'
-vom_file_ndvi_filt <- 'VOM/SS79_VOM_with_NFI_NDVI_masked.tif'
-setwd(wd)
-
 library(terra)
 library(raster)
 library(dplyr)
@@ -26,6 +21,13 @@ library(dplyr)
 library(centerline)
 library(smoothr)
 
+tile_of_interest <- args[1]
+
+wd <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis"
+vom_file <- glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif")
+vom_file_ndvi_filt <- glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif")
+setwd(wd)
+
 #################################################
 # Functions
 #################################################
@@ -34,22 +36,16 @@ library(smoothr)
 get_adjusted_straightness <- function(geom, penalty = 2) {
   coords <- st_coordinates(geom)
   if (nrow(coords) < 2) return(NA_real_)
-  
   # Start and end coordinates
   start <- coords[1, c("X", "Y")]
   end <- coords[nrow(coords), c("X", "Y")]
-  
   # Euclidean distance
   euclid_dist <- sqrt(sum((end - start)^2))
-  
   # Total line length
   total_length <- as.numeric(st_length(geom))
-  
   if (total_length == 0) return(NA_real_)
-  
   # Base straightness
   straightness <- euclid_dist / total_length
-  
   # Penalized straightness
   adjusted <- straightness^penalty
   return(c(adjusted))
@@ -58,19 +54,14 @@ get_adjusted_straightness <- function(geom, penalty = 2) {
 get_euclidian_dist <- function(geom) {
   coords <- st_coordinates(geom)
   if (nrow(coords) < 2) return(NA_real_)
-  
   # Start and end coordinates
   start <- coords[1, c("X", "Y")]
   end <- coords[nrow(coords), c("X", "Y")]
-  
   # Euclidean distance
   euclid_dist <- sqrt(sum((end - start)^2))
-  
   # Total line length
   total_length <- as.numeric(st_length(geom))
-  
   if (total_length == 0) return(NA_real_)
-  
   return(euclid_dist)
 }
 
@@ -93,13 +84,13 @@ ncol_chm <- ncol(chm_ndvi_filt)
 nrow_chm <- nrow(chm_ndvi_filt)
 
 section_size <- 1000
-overlap <- 10 
+overlap <- 10
 
 for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
   for (col_start in seq(1, ncol_chm, by = section_size - overlap)) {
-    
+
     print(glue("row {row_start}, col {col_start}"))
-    
+
     out_path <- paste0("section_", row_start, "_", col_start)
     file_path <- glue("{wd}/Hedges/{out_path}.tif")
     if (file.exists(file_path)) {
@@ -107,10 +98,10 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       output_files <- c(output_files, file_path)
       next
     }
-    
+
     row_end <- min(row_start + section_size - 1, nrow_chm)
     col_end <- min(col_start + section_size - 1, ncol_chm)
-    
+
     # Get cell numbers for corners
     cell_top_left <- cellFromRowCol(chm_ndvi_filt, row_start, col_start)
     cell_bottom_right <- cellFromRowCol(chm_ndvi_filt, row_end, col_end)
@@ -333,16 +324,16 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     if (!is.null(hedges) && nrow(hedges) > 0) {
       st_write(hedges, glue("{wd}/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
       
-      #chm_filtered <- mask(chm_full_crop, hedges, inverse=TRUE)
-      #writeRaster(chm_filtered, glue("{wd}/Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
+      chm_filtered <- mask(chm_full_crop, hedges, inverse=TRUE)
+      writeRaster(chm_filtered, glue("{wd}/Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
       
-      #filt_max_class_filt <- mask(filt_max_class, hedges, inverse=TRUE)
-      #writeRaster(filt_max_class_filt, glue("{wd}/Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
+      filt_max_class_filt <- mask(filt_max_class, hedges, inverse=TRUE)
+      writeRaster(filt_max_class_filt, glue("{wd}/Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
       
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      #writeRaster(chm_full_crop, glue("{wd}/Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
-      #writeRaster(filt_max_class, glue("{wd}/Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
+      writeRaster(chm_full_crop, glue("{wd}/Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
+      writeRaster(filt_max_class, glue("{wd}/Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
     }
     
     file.remove(glue('{wd}/Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif'))
