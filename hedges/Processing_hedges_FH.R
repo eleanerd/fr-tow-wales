@@ -24,9 +24,11 @@ library(smoothr)
 tile_of_interest <- args[1]
 
 wd <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis"
-vom_file <- glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif")
-vom_file_ndvi_filt <- glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif")
 setwd(wd)
+
+vom_file <- glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif") # CHM with NFI masked
+vom_file_ndvi_filt <- glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif") # CHM with NFI and NDVI masked
+
 
 #################################################
 # Functions
@@ -83,68 +85,72 @@ chm_ndvi_filt <- rast(vom_file_ndvi_filt)
 ncol_chm <- ncol(chm_ndvi_filt)
 nrow_chm <- nrow(chm_ndvi_filt)
 
+# Section parameters
 section_size <- 1000
 overlap <- 10
 
+# Iterate over sections (~100 per 10km tile)
 for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
   for (col_start in seq(1, ncol_chm, by = section_size - overlap)) {
 
     print(glue("row {row_start}, col {col_start}"))
 
+    # Check if output file already exists - skip
     out_path <- paste0("section_", row_start, "_", col_start)
-    file_path <- glue("{wd}/Hedges/{out_path}.tif")
+    file_path <- glue("Hedges/{out_path}.tif")
     if (file.exists(file_path)) {
       print("The file exists!")
       output_files <- c(output_files, file_path)
       next
     }
 
+    # Define section boundaries
     row_end <- min(row_start + section_size - 1, nrow_chm)
     col_end <- min(col_start + section_size - 1, ncol_chm)
-
     # Get cell numbers for corners
     cell_top_left <- cellFromRowCol(chm_ndvi_filt, row_start, col_start)
     cell_bottom_right <- cellFromRowCol(chm_ndvi_filt, row_end, col_end)
-    
     # Get coordinates of those cells
     coords_top_left <- xyFromCell(chm_ndvi_filt, cell_top_left)
     coords_bottom_right <- xyFromCell(chm_ndvi_filt, cell_bottom_right)
-    
     # Create extent from coordinates
     ext_section <- ext(
       coords_top_left[1], coords_bottom_right[1],
       coords_bottom_right[2], coords_top_left[2]
     )
-    
     # Crop section
     chm <- crop(chm_ndvi_filt, ext_section)
+    chm_full_crop <- crop(chm_full, ext_section)
+
+    # Set values below 1.3m to NA
     chm[chm < 1.3] <- NA
-    
+
     # Skip if section is entirely NA
     if (all(is.na(values(chm)))) {
       print(glue("Section {out_path} is all NA, skipping..."))
       next
     }
-    
+
     # Step 1: 5x5 m local maximum filter
-    print('Step 1: 5x5 m local maximum filter')
+    print("Step 1: 5x5 m local maximum filter")
     local_max <- terra::focal(chm, w = matrix(1, 5, 5), fun = max, na.rm = T)
-    local_max[is.na(chm)] <- NA # set all NA values in original data back to NA to stop expansion by window
-    
+    # set all NA values in original data back to NA to stop expansion by window
+    local_max[is.na(chm)] <- NA 
+
     # Step 2: Initial height-based classification
-    print('Step 2: Initial height-based classification')
+    print("Step 2: Initial height-based classification")
     # Reclassification matrix: start, end, new class
     rcl <- matrix(c(
       1.3, 6,      1.3,
       6, Inf,       6
     ), ncol=3, byrow=TRUE)
-    
+
     local_max <- as(local_max, "SpatRaster")
     class_raster <- classify(local_max, rcl)
-    
-    rm(local_max)
+
+    rm(local_max) # free up memory
     gc()
-    
+
     # modal filter
     fw <- matrix(nrow = 3, ncol = 3)
     fw[is.na(fw)] <- 1
@@ -155,14 +161,13 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       na.rm = T
     )
     class_raster_mod[is.na(class_raster)] <- 0
-    plot(class_raster_mod)
-    
-    
+    #plot(class_raster_mod)
+
     # seive based on islands under 
-    writeRaster(class_raster_mod, glue('{wd}/Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif'), overwrite = TRUE)
-    
-    system(glue('"C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\python.exe" "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\Scripts\\gdal_sieve.py" -st 5 -8 -of GTiff "{wd}/Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif" "{wd}/Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"'))
-    filt_max_class <- raster(glue("{wd}/Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"))
+    writeRaster(class_raster_mod, glue("Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif"), overwrite = TRUE)
+
+    system(glue('"C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\python.exe" "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\Scripts\\gdal_sieve.py" -st 5 -8 -of GTiff "Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif" "Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"'))
+    filt_max_class <- raster(glue("Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"))
     
     filt_max_class_og <- filt_max_class
     filt_max_class[filt_max_class == 0] <- NA
@@ -322,22 +327,22 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     close(pb)
     
     if (!is.null(hedges) && nrow(hedges) > 0) {
-      st_write(hedges, glue("{wd}/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
+      st_write(hedges, glue("Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
       
       chm_filtered <- mask(chm_full_crop, hedges, inverse=TRUE)
-      writeRaster(chm_filtered, glue("{wd}/Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
+      writeRaster(chm_filtered, glue("Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
       
       filt_max_class_filt <- mask(filt_max_class, hedges, inverse=TRUE)
-      writeRaster(filt_max_class_filt, glue("{wd}/Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
+      writeRaster(filt_max_class_filt, glue("Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
       
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      writeRaster(chm_full_crop, glue("{wd}/Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
-      writeRaster(filt_max_class, glue("{wd}/Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
+      writeRaster(chm_full_crop, glue("Hedges/CHMs/{out_path}.tif"), overwrite = TRUE)
+      writeRaster(filt_max_class, glue("Hedges/Rasters/{out_path}.tif"), overwrite=TRUE)
     }
     
-    file.remove(glue('{wd}/Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif'))
-    file.remove(glue("{wd}/Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"))
+    file.remove(glue('Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif'))
+    file.remove(glue("Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif"))
     
   }
 }
