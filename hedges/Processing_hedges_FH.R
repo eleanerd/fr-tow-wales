@@ -98,7 +98,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
     # Check if output file already exists - skip
     out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
-    file_path <- glue("0_VOM/Hedges/{out_path}.tif")
+    file_path <- glue("0_VOM/Hedges/Rasters/{out_path}.tif")
     if (file.exists(file_path)) {
       print("The file exists!")
       output_files <- c(output_files, file_path)
@@ -167,7 +167,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     # seive based on islands under 5 pixels
     raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_class_raster_mod_{row_start}_{col_start}.tif")
     writeRaster(class_raster_mod, raster_fp, overwrite = TRUE)
-    
+
     # GDAL Sieve
     py_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\python.exe"
     gdal_sieve <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\Scripts\\gdal_sieve.py"
@@ -179,6 +179,10 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     filt_max_class_og <- filt_max_class
     filt_max_class[filt_max_class == 0] <- NA
     filt_max_class[filt_max_class != 0] <- 1
+
+    # Remove raster_fp and sieved_raster_fp from file
+    file.remove(raster_fp)
+    file.remove(sieved_raster_fp)
 
     # Convert to polygons
     canopy_area <- stars:::st_as_sf.stars(
@@ -303,11 +307,26 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
         preserveTopology = TRUE
       )
 
+      # Create skeleton of polygon
       skel_dense <- centerline::cnt_skeleton(narrow_parts, keep = 1.5)
-      skel_cent <- centerline::cnt_path_guess(
-        input = narrow_parts,
-        skeleton = skel_dense
-      )
+
+      # Eleanor edit:
+      # Ensure keleton is not empty
+      if (length(skel_dense) > 0) {
+
+        # Extract longest path
+        skel_cent <- centerline::cnt_path_guess(
+          input = narrow_parts,
+          skeleton = skel_dense
+        )
+        
+        if (dim(skel_cent)[1] == 0) {
+          next() # Skip polygons that have no skeleton paths
+        }
+      } else {
+        next() # Skip is skeleton is empty
+      }
+      
       skel_cent$cnt_length <- as.numeric(st_length(skel_cent))
       skel_cent <- skel_cent %>% filter(cnt_length >= 20)
 
