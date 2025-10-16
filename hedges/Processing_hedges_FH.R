@@ -4,6 +4,8 @@
 # Wales TOW
 ###################
 
+# Reviewed 16 Oct 2025 by Eleanor Downer
+
 #################################################
 # Settings and Libraries
 #################################################
@@ -21,7 +23,7 @@ library(dplyr)
 library(centerline)
 library(smoothr)
 
-tile_of_interest <- args[1]
+tile_of_interest <- "SN67"
 
 wd <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data"
 setwd(wd)
@@ -164,16 +166,13 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
     # seive based on islands under 5 pixels
     raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_class_raster_mod_{row_start}_{col_start}.tif")
-    sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
-
     writeRaster(class_raster_mod, raster_fp, overwrite = TRUE)
-
+    
     # GDAL Sieve
-    system(glue('"C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\python.exe" /
-                "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\Scripts\\gdal_sieve.py" /
-                -st 5 -8 -of GTiff /
-                "{raster_fp}" /
-                "{sieved_raster_fp}"'))
+    py_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\python.exe"
+    gdal_sieve <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\Scripts\\gdal_sieve.py"
+    sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
+    system(glue('"{py_path}" "{gdal_sieve}" -st 5 -8 -of GTiff "{raster_fp}" "{sieved_raster_fp}"'))
 
     # Load sieved raster
     filt_max_class <- raster(sieved_raster_fp)
@@ -231,7 +230,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
-        print("No narrow_parts... next")
+        #print("No narrow_parts... next")
         next()
       }
 
@@ -291,7 +290,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       #plot(narrow_parts$x, add = T, col = 'blue')
 
       # Smooth the poly
-      narrow_parts <- smooth(
+      narrow_parts <- smoothr::smooth(
         narrow_parts2,
         method = "ksmooth",
         smoothness = 15
