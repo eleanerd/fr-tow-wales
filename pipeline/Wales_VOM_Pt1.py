@@ -16,6 +16,7 @@ from rasterio import features
 from rasterio.mask import mask
 #from rasterio.crs import CRS
 from rasterio.windows import from_bounds
+from rasterio.warp import reproject, Resampling
 #from shapely.geometry import shape
 import numpy as np
 import geopandas as gpd
@@ -27,15 +28,14 @@ from skimage import morphology
 ###############################
 
 tile_of_interest = sys.argv[1]
-wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/3_Test_Square'
+wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
 
 ###############################
 # Get extent of tile 
 ###############################
 
-fp = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/4_Wales_10km_Squares/Wales_10km_Squares.shp'
+fp = f'{wd}/1_Reference_Data/4_Wales_10km_Squares/Wales_10km_Squares_Planet_overlap.gpkg'
 wales_10km_footprint = gpd.read_file(fp)
-
 tile_footprint = wales_10km_footprint[wales_10km_footprint['tileref'] == tile_of_interest]
 tile_footprint = tile_footprint.set_crs('EPSG:27700')
 
@@ -45,7 +45,7 @@ tile_footprint = tile_footprint.set_crs('EPSG:27700')
 
 print('Removing pixels below 1.3m from CHM')
 
-chm_fp = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/1_Wales_LiDAR/Wales_CHM_2020_22_32bit.tif'
+chm_fp = f'{wd}/1_Reference_Data/1_Wales_LiDAR/Wales_CHM_2020_22_32bit.tif'
 
 with rasterio.open(chm_fp) as src:
 
@@ -64,7 +64,7 @@ out_shape = (int(window.height), int(window.width))
 # Create dictionary OSMM terms
 #################################
 
-osm_desc_terms = pd.read_csv('Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/5_Wales_OSMM_2023/descterm_categories.csv')
+osm_desc_terms = pd.read_csv(f'{wd}/1_Reference_Data/5_Wales_OSMM_2023/descterm_categories.csv')
 osm_desc_terms.columns = osm_desc_terms.columns.str.strip()
 osm_desc_terms = osm_desc_terms.map(lambda x: x.strip() if isinstance(x, str) else x)
 
@@ -75,16 +75,13 @@ osm_terms = {
     "water_terms": osm_desc_terms.loc[osm_desc_terms["category"] == "water_body", "descterm"].tolist()
 }
 
-for k, v in osm_terms.items():
-    print(f"{k}: {v}")
-
 ##############################
 # Categorise OSMM
 ##############################
 
 print('Categorising OSMM features')
 
-OSMM_path = f'{wd}/OSMM_Square_{tile_of_interest}/OSMM_Square_{tile_of_interest}.shp'
+OSMM_path = f'{wd}/1_Reference_Data/5_Wales_OSMM_2023/GPKG/OS_Map_{tile_of_interest}.gpkg'
 OSMM = gpd.read_file(OSMM_path)
 
 if OSMM.crs != chm_crs:
@@ -172,7 +169,7 @@ chm_data[combined_mask] = np.nan
 
 print('Masking out buildings from OpenStreetMap')
 
-osm_fp = f'C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/wales_osm_clean.gpkg'
+osm_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/wales_osm_clean.gpkg'
 osm_polygons = gpd.read_file(osm_fp, layer='multipolygons', bbox=tile_footprint)
 osm_buildings = osm_polygons[osm_polygons['building'].notna()].copy()
 osm_buildings = osm_buildings.to_crs(chm_crs)
@@ -196,7 +193,7 @@ chm_data[osm_buildings_mask] = np.nan
 
 print('Masking out power cables from CHM')
 
-cables_fp = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/10_Power_Lines/OHL_buffered.gpkg'
+cables_fp = f'{wd}/1_Reference_Data/10_Power_Lines/OHL_buffered.gpkg'
 cables = gpd.read_file(cables_fp)
 cables = cables.set_crs(chm_crs) 
 
@@ -222,7 +219,7 @@ chm_data[cables_mask] = np.nan
 
 print('Masking out power structures from CHM')
 
-power_structures_fp = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/11_OpenStreetMap/osm_power_structures_v2.gpkg'
+power_structures_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/osm_power_structures_v2.gpkg'
 power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint)
 
 power_structures = power_structures[power_structures['power_source'] != 'solar'].copy()
@@ -242,30 +239,36 @@ power_structures_mask = power_structures_mask.astype(bool)
 chm_data[power_structures_mask] = np.nan
 
 ####################################
-# Save to file - with NFI still
-####################################
-
-out_meta.update({
-    'width' : out_shape[1],
-    'height' : out_shape[0],
-    'crs' : chm_crs,
-    'transform' : out_transform,
-})
-
-chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
-
-output_path = f'{wd}/VOM/{tile_of_interest}_VOM_with_NFI.tif'
-with rasterio.open(output_path, "w", **out_meta) as dst:
-    dst.write(chm_data, 1)
-
-####################################
 # NDVI Thresholding
 ####################################
 
 chm_data_ndvi = chm_data.copy()
 
-ndvi_fp = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/3_Test_Square/NDVI/{tile_of_interest}_ndvi_composite_resampled.tif'
+ndvi_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite.tif'
+ndvi_resampled_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite_resampled.tif'
+
+# Resample NDVI raster to match CHM raster (1m2)
 with rasterio.open(ndvi_fp) as src:
+    dst_meta = out_meta.copy()
+    dst_meta.update({
+        "dtype": src.meta["dtype"],  # keep original dtype
+        "count": 1
+    })
+
+    with rasterio.open(ndvi_resampled_fp, 'w', **dst_meta) as dst:
+        reproject(
+            source=rasterio.band(src,1),
+            destination=rasterio.band(dst,1),
+            src_transform=src.transform,
+            src_crs=src.crs,
+            dst_transform=out_transform,
+            dst_crs=out_meta['crs'],
+            dst_width=out_meta['width'],
+            dst_height=out_meta['height'],
+            resampling=Resampling.bilinear
+        )
+
+with rasterio.open(ndvi_resampled_fp) as src:
     ndvi_array = src.read(1).astype('float32')
 
 ndvi_array[ndvi_array == -9999] = np.nan
@@ -315,6 +318,6 @@ out_meta.update({
 
 chm_data_ndvi_masked = np.where(np.isnan(chm_data_ndvi_masked), -9999.0, chm_data_ndvi_masked)
 
-output_path = f'{wd}/VOM/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data_ndvi_masked, 1)
