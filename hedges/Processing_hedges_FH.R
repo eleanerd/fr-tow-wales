@@ -4,6 +4,8 @@
 # Wales TOW
 ###################
 
+# Reviewed 16 Oct 2025 by Eleanor Downer
+
 #################################################
 # Settings and Libraries
 #################################################
@@ -12,7 +14,6 @@ rm(list = ls())
 gc()
 
 library(terra)
-library(raster)
 library(dplyr)
 library(sf)
 library(glue)
@@ -21,7 +22,7 @@ library(dplyr)
 library(centerline)
 library(smoothr)
 
-tile_of_interest <- args[1]
+tile_of_interest <- "SS79"
 
 wd <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data"
 setwd(wd)
@@ -89,6 +90,8 @@ nrow_chm <- nrow(chm_ndvi_filt)
 section_size <- 1000
 overlap <- 10
 
+output_files <- list()
+
 # Iterate over sections (~100 per 10km tile)
 for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
   for (col_start in seq(1, ncol_chm, by = section_size - overlap)) {
@@ -96,11 +99,11 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
     # Check if output file already exists - skip
     out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
-    file_path <- glue("0_VOM/Hedges/{out_path}.tif")
+    file_path <- glue("0_VOM/Hedges/Rasters/{out_path}.tif")
     if (file.exists(file_path)) {
       print("The file exists!")
       output_files <- c(output_files, file_path)
-      next
+      #next
     }
 
     # Define section boundaries
@@ -135,22 +138,21 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     local_max <- terra::focal(chm, w = matrix(1, 5, 5), fun = max, na.rm = TRUE)
     # set all NA values in original data back to NA to stop expansion by window
     local_max[is.na(chm)] <- NA
+    local_max <- as(local_max, "SpatRaster")
 
     # Step 2: Initial height-based classification
     print("Step 2: Initial height-based classification")
     # Reclassification matrix: start, end, new class
+    # Using integers for class labels - faster
     rcl <- matrix(c(
-      1.3, 6,      1.3,
-      6, Inf,       6
+      1.3, 6, 1,
+      6, Inf, 2
     ), ncol=3, byrow=TRUE)
-
-    local_max <- as(local_max, "SpatRaster")
     class_raster <- classify(local_max, rcl)
 
     rm(local_max) # free up memory
-    gc()
 
-    # modal filter
+    # Apply modal filter
     fw <- matrix(nrow = 3, ncol = 3)
     fw[is.na(fw)] <- 1
     class_raster_mod <- terra::focal(
@@ -160,26 +162,34 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       na.rm = T
     )
     class_raster_mod[is.na(class_raster)] <- 0
+    rm(class_raster) # free up memory
     #plot(class_raster_mod)
 
     # seive based on islands under 5 pixels
     raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_class_raster_mod_{row_start}_{col_start}.tif")
-    sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
-
-    writeRaster(class_raster_mod, raster_fp, overwrite = TRUE)
+    terra::writeRaster(class_raster_mod, raster_fp, overwrite = TRUE)
 
     # GDAL Sieve
-    system(glue('"C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\python.exe" /
-                "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\Scripts\\gdal_sieve.py" /
-                -st 5 -8 -of GTiff /
-                "{raster_fp}" /
-                "{sieved_raster_fp}"'))
+    py_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\python.exe"
+    gdal_sieve <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\Scripts\\gdal_sieve.py"
+    sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
+    system(glue('"{py_path}" "{gdal_sieve}" -st 5 -8 -of GTiff "{raster_fp}" "{sieved_raster_fp}"'))
+    
+    file.remove(raster_fp) # Remove to save disk space
+    rm(class_raster_mod) # free up memory
 
     # Load sieved raster
-    filt_max_class <- raster(sieved_raster_fp)
+    filt_max_class <- terra::rast(sieved_raster_fp)
     filt_max_class_og <- filt_max_class
-    filt_max_class[filt_max_class == 0] <- NA
-    filt_max_class[filt_max_class != 0] <- 1
+    filt_max_class[filt_max_class == 0] <- NA # Turn masked out areas to NA
+    filt_max_class[filt_max_class != 0] <- 1 # Turn remaining pixels to 1
+    
+    file.remove(sieved_raster_fp)
+
+    # Remove pixels over 6m
+    msk6 <- filt_max_class_og == 2
+    msk6[isFALSE(msk6)] <- NA
+    mask_poly <- as.polygons(msk6) %>% st_as_sf() %>% st_buffer(0.2) # This is used later
 
     # Convert to polygons
     canopy_area <- stars:::st_as_sf.stars(
@@ -192,15 +202,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       st_union() %>%
       st_cast("POLYGON") %>%
       st_as_sf()
-
-    # Remove pixels over 6m
-    filt6 <- terra::rast(filt_max_class_og)
-    msk6 <- filt6 >= 6
-    msk6[isFALSE(msk6)] <- NA
-
-    # This is used later
-    mask_poly <- as.polygons(msk6) %>% st_as_sf() %>% st_buffer(0.2)
-
+    
     # Progress bar
     pb <- txtProgressBar(min = 0, max = length(canopy_area$x), style = 3)
 
@@ -208,7 +210,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     hedges <- NULL
     for (pol in seq_along(canopy_area$x)) {
 
-      #print(pol)
       poly <- canopy_area$x[pol]
       area <- st_area(poly) %>% units::drop_units()
 
@@ -217,11 +218,9 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
         #print('Too small... next')
         next()
       }
-
-      # Buffer inward by a small amount
-      shrunk <- st_buffer(poly, -2.49, endCapStyle = 'FLAT')
-      # Buffer back outward
-      regrown <- st_buffer(shrunk, 2.6, endCapStyle = 'FLAT')
+      
+      shrunk <- st_buffer(poly, -2.49, endCapStyle = 'FLAT') # Buffer inward by a small amount
+      regrown <- st_buffer(shrunk, 2.6, endCapStyle = 'FLAT') # Buffer back outward
 
       # Subtract to get narrow border regions
       narrow_parts1 <- st_difference(poly, regrown) %>%
@@ -231,7 +230,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
-        print("No narrow_parts... next")
+        #print("No narrow_parts... next")
         next()
       }
 
@@ -259,10 +258,8 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       }
 
       # Rerun previous part
-      # Buffer inward by a small amount
-      shrunk2 <- st_buffer(poly_cleaned, -2.49, endCapStyle = "FLAT")
-      # Buffer back outward
-      regrown2 <- st_buffer(shrunk2, 2.6, endCapStyle = "FLAT")
+      shrunk2 <- st_buffer(poly_cleaned, -2.49, endCapStyle = "FLAT") # Buffer inward by a small amount
+      regrown2 <- st_buffer(shrunk2, 2.6, endCapStyle = "FLAT") # Buffer back outward
 
       # Subtract to get narrow border regions
       narrow_parts2 <- st_difference(poly_cleaned, regrown2) %>%
@@ -277,11 +274,9 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       }
 
       narrow_parts2$id <- c(1:nrow(narrow_parts2))
-
       narrow_parts2$area_m <- narrow_parts2 %>%
         st_area() %>%
         units::drop_units()
-
       narrow_parts2 <- narrow_parts2 %>% filter(area_m >= 20)
 
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
@@ -290,8 +285,8 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       }
       #plot(narrow_parts$x, add = T, col = 'blue')
 
-      # Smooth the poly
-      narrow_parts <- smooth(
+      # Smooth the polygon
+      narrow_parts <- smoothr::smooth(
         narrow_parts2,
         method = "ksmooth",
         smoothness = 15
@@ -304,20 +299,33 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
         preserveTopology = TRUE
       )
 
+      # Create skeleton of polygon
       skel_dense <- centerline::cnt_skeleton(narrow_parts, keep = 1.5)
-      skel_cent <- centerline::cnt_path_guess(
-        input = narrow_parts,
-        skeleton = skel_dense
-      )
-      skel_cent$cnt_length <- as.numeric(st_length(skel_cent))
-      skel_cent <- skel_cent %>% filter(cnt_length >= 20)
 
+      # Ensure skeleton is not empty
+      if (length(skel_dense) > 0) {
+        # Extract longest path
+        skel_cent <- centerline::cnt_path_guess(
+          input = narrow_parts,
+          skeleton = skel_dense
+        )
+      } else {
+        next() # Skip is skeleton is empty
+      }
       if (dim(skel_cent)[1] == 0) {
-        #print('Skeleteon lines over 10m, no hedges... next')
+        # Skip polygons that have no skeleton paths
+        next() 
+      }
+      
+      # Filter out short lines
+      skel_cent$cnt_length <- as.numeric(st_length(skel_cent))
+      skel_cent$cnt_len_adj <- skel_cent$cnt_length * 0.92
+      skel_cent <- skel_cent %>% filter(cnt_len_adj >= 20)
+      if (dim(skel_cent)[1] == 0) {
         next()
       }
 
-      # Apply to all geometries
+      # Ggt straightness, auclid and length
       skel_cent <- skel_cent %>%
         mutate(
           straightness = purrr::map_dbl(geometry, get_adjusted_straightness),
@@ -328,46 +336,46 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       # Filter out wiggly lines
       filtered_skel_cent <- skel_cent %>%
         filter(straightness > 0.5)
-
-      other_dat <- filtered_skel_cent %>% st_drop_geometry()
-
-      narrow_parts$lar = st_length(st_boundary(narrow_parts)) / st_area(narrow_parts) %>%units::drop_units()
-      hedges_sel <- filter(narrow_parts, id %in% filtered_skel_cent$id)
-
       if (dim(filtered_skel_cent)[1] == 0) {
         next()
       }
 
+      other_dat <- filtered_skel_cent %>% st_drop_geometry()
+      
+      # Select hedges that are straight
+      hedges_sel <- filter(narrow_parts, id %in% filtered_skel_cent$id)
+      
+      # Minimum bounding circle
       mbc_a <- lwgeom::st_minimum_bounding_circle(hedges_sel) %>%
         st_area() %>%
         units::drop_units()
       mbc_p <- hedges_sel$area_m/mbc_a * 100
       hedges_sel$mbcp <- mbc_p
+      # Remove 'compact' polygons; those with mbcp > 30%
+      hedges_sel <- hedges_sel[hedges_sel$mbcp < 30, ]
+      
       hedges_sel <- merge(hedges_sel, other_dat, by = "id")
 
       # filter hedges
       # Calculate the adjusted centre line length
       # Estimated at 8% over true centre line length, possible more like 10-12%, but using 8% as conservative
-      hedges_sel$cnt_len_adj <- hedges_sel$cnt_length * 0.92
+      # ED : moved up in the script and avoided filtering for straightness twice
+      #hedges_sel$cnt_len_adj <- hedges_sel$cnt_length * 0.92
+      # ED : What's the reason for the calculation? Not used again in script.
+      #dim(hedges_sel[hedges_sel$cnt_len_adj < 20, ])[1] / dim(hedges_sel)[1] * 100 
+      #hedges_sel <- hedges_sel[hedges_sel$cnt_len_adj >= 20, ] # Remove very short hedges 
+      
+      # Get max rectangle area
+      hedges_sel$max_rec_area  <-max_rectangle_area(hedges_sel$cnt_len_adj) 
 
-      # % of hedges to be removed
-      dim(hedges_sel[hedges_sel$cnt_len_adj < 20, ])[1] / dim(hedges_sel)[1] * 100
-
-      # remove these
-      hedges_sel <- hedges_sel[hedges_sel$cnt_len_adj >= 20, ]
-
-      # get max rectangle area
-      hedges_sel$max_rec_area  <-max_rectangle_area(hedges_sel$cnt_len_adj)
-
-      # what is this area relative to that actually measured?
+      # Computes polygon area as a percentage of the estimated max rectangle area
+      # Remove polygons where area exceeds the rectangle (likely 'fat' polygons)
       hedges_sel$max_area_perc <- hedges_sel$area_m.x / hedges_sel$max_rec_area * 100
-
-      # remove those with an area over 100.
       hedges_sel <- hedges_sel[hedges_sel$max_area_perc < 100, ]
-
-      # remove those with mbcp > 30%
-      hedges_sel <- hedges_sel[hedges_sel$mbcp < 30, ]
-
+      
+      # Calculate length-area-ratio
+      hedges_sel$lar = st_length(st_boundary(hedges_sel)) / st_area(hedges_sel) %>%units::drop_units()
+      
       hedges <- rbind(hedges, hedges_sel)
 
       setTxtProgressBar(pb, pol)
@@ -383,23 +391,23 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
 
       chm_filtered <- mask(chm_full_crop, hedges, inverse = TRUE)
-      writeRaster(chm_filtered,
-                  glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-                  overwrite = TRUE)
+      terra::writeRaster(chm_filtered,
+                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+                         overwrite = TRUE)
+      
 
       filt_max_class_filt <- mask(filt_max_class, hedges, inverse = TRUE)
-      writeRaster(filt_max_class_filt,
-                  glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
-                  overwrite = TRUE)
-
+      terra::writeRaster(filt_max_class_filt,
+                          glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
+                          overwrite = TRUE)
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      writeRaster(chm_full_crop,
-                  glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-                  overwrite = TRUE)
-      writeRaster(filt_max_class,
-                  glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
-                  overwrite = TRUE)
+      terra::writeRaster(chm_full_crop,
+                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+                         overwrite = TRUE)
+      terra::writeRaster(filt_max_class,
+                         glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
+                         overwrite = TRUE)
     }
 
     file.remove(
