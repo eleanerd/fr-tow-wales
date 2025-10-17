@@ -238,6 +238,23 @@ power_structures_mask = features.rasterize(
 power_structures_mask = power_structures_mask.astype(bool)
 chm_data[power_structures_mask] = np.nan
 
+# ####################################
+# # Save to file - with NFI still
+# ####################################
+
+out_meta.update({
+    'width' : out_shape[1],
+    'height' : out_shape[0],
+    'crs' : chm_crs,
+    'transform' : out_transform,
+})
+
+chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
+
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif'
+with rasterio.open(output_path, "w", **out_meta) as dst:
+    dst.write(chm_data, 1)
+
 ####################################
 # NDVI Thresholding
 ####################################
