@@ -21,6 +21,7 @@ library(deldir)
 library(dplyr)
 library(centerline)
 library(smoothr)
+library(raster)
 
 tile_of_interest <- "SS79"
 
@@ -90,7 +91,9 @@ nrow_chm <- nrow(chm_ndvi_filt)
 section_size <- 1000
 overlap <- 10
 
-output_files <- list()
+# Before the loop, initialize lists to store outputs
+hedges_list <- list()
+chm_list <- list()
 
 # Iterate over sections (~100 per 10km tile)
 for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
@@ -98,13 +101,12 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     print(glue("row {row_start}, col {col_start}"))
 
     # Check if output file already exists - skip
-    out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
-    file_path <- glue("0_VOM/Hedges/Rasters/{out_path}.tif")
-    if (file.exists(file_path)) {
-      print("The file exists!")
-      output_files <- c(output_files, file_path)
-      #next
-    }
+    #out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
+    #file_path <- glue("0_VOM/Hedges/Rasters/{out_path}.tif")
+    #if (file.exists(file_path)) {
+    #  print("The file exists!")
+    #  next
+    #}
 
     # Define section boundaries
     row_end <- min(row_start + section_size - 1, nrow_chm)
@@ -153,8 +155,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     rm(local_max) # free up memory
 
     # Apply modal filter
-    fw <- matrix(nrow = 3, ncol = 3)
-    fw[is.na(fw)] <- 1
+    fw <- matrix(1, 3, 3)
     class_raster_mod <- terra::focal(
       x = class_raster,
       w = fw,
@@ -170,38 +171,33 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     terra::writeRaster(class_raster_mod, raster_fp, overwrite = TRUE)
 
     # GDAL Sieve
-    py_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\python.exe"
-    gdal_sieve <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\Scripts\\gdal_sieve.py"
+    py_path <- "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\python.exe"
+    gdal_sieve <- "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\Scripts\\gdal_sieve.exe"
     sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
-    system(glue('"{py_path}" "{gdal_sieve}" -st 5 -8 -of GTiff "{raster_fp}" "{sieved_raster_fp}"'))
+    system(glue('"{gdal_sieve}" -st 5 -8 -of GTiff "{raster_fp}" "{sieved_raster_fp}"'))
     
-    file.remove(raster_fp) # Remove to save disk space
-    rm(class_raster_mod) # free up memory
-
-    # Load sieved raster
+    #file.remove(raster_fp) # Remove to save disk space
+    #rm(class_raster_mod) # free up memory
+    
     filt_max_class <- terra::rast(sieved_raster_fp)
-    filt_max_class_og <- filt_max_class
-    filt_max_class[filt_max_class == 0] <- NA # Turn masked out areas to NA
-    filt_max_class[filt_max_class != 0] <- 1 # Turn remaining pixels to 1
+    filt_max_class[filt_max_class == 0] <- NA
+    filt_max_class[filt_max_class != 0] <- 1
     
-    file.remove(sieved_raster_fp)
-
-    # Remove pixels over 6m
-    msk6 <- filt_max_class_og == 2
-    msk6[isFALSE(msk6)] <- NA
-    mask_poly <- as.polygons(msk6) %>% st_as_sf() %>% st_buffer(0.2) # This is used later
-
-    # Convert to polygons
     canopy_area <- stars:::st_as_sf.stars(
-      stars::st_as_stars(filt_max_class),
-      point = FALSE,
-      merge = TRUE,
-      connect8 = TRUE
-    ) %>%
-      st_buffer(0.01) %>%
-      st_union() %>%
-      st_cast("POLYGON") %>%
-      st_as_sf()
+      stars::st_as_stars(filt_max_class), 
+      point = FALSE, 
+      merge = TRUE, 
+      connect8 = TRUE) %>% 
+      st_buffer(0.01) %>% 
+      st_union() %>% 
+      st_cast('POLYGON') %>% 
+      st_as_sf() 
+    
+    # remove pixels over 6m
+    filt6 <- terra::rast(sieved_raster_fp)
+    msk6 <- filt6 == 2
+    msk6[isFALSE(msk6)] <- NA 
+    mask_poly <- as.polygons(msk6) %>% st_as_sf() %>% st_buffer(0.2) # this is used later
     
     # Progress bar
     pb <- txtProgressBar(min = 0, max = length(canopy_area$x), style = 3)
@@ -215,7 +211,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip small polygons
       if (area < 20) {
-        #print('Too small... next')
         next()
       }
       
@@ -230,7 +225,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
-        #print("No narrow_parts... next")
         next()
       }
 
@@ -242,9 +236,10 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
-        #print("No narrow_parts... next")
         next()
       }
+      
+      ## What if mask_poly is empty? Aka there's no polygons over 6m in section
 
       # Remove pixels over 6m
       poly_cleaned <- st_difference(narrow_parts1, mask_poly) %>%
@@ -253,7 +248,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(poly_cleaned)[1] == 0)) {
-        #print("No narrow_parts... next")
         next()
       }
 
@@ -269,7 +263,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
-        #print("No narrow_parts... next")
         next()
       }
 
@@ -280,7 +273,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       narrow_parts2 <- narrow_parts2 %>% filter(area_m >= 20)
 
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
-        #print("No narrow_parts... next")
         next()
       }
       #plot(narrow_parts$x, add = T, col = 'blue')
@@ -301,20 +293,27 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Create skeleton of polygon
       skel_dense <- centerline::cnt_skeleton(narrow_parts, keep = 1.5)
-
-      # Ensure skeleton is not empty
-      if (length(skel_dense) > 0) {
-        # Extract longest path
-        skel_cent <- centerline::cnt_path_guess(
+      
+      # Ensure skeleton is valid and non-empty
+      if (inherits(skel_dense, "sf") && nrow(skel_dense) > 0 &&
+          all(!st_is_empty(skel_dense)) &&
+          all(st_length(skel_dense) > units::set_units(0, "m"))) {
+        
+        skel_dense <- st_make_valid(skel_dense)
+        
+        # Try path extraction safely
+        skel_cent <-centerline::cnt_path_guess(
           input = narrow_parts,
           skeleton = skel_dense
         )
+        
+        # Skip if cnt_path_guess fails
+        if (nrow(skel_cent) == 0) {
+          next()
+        }
+        
       } else {
-        next() # Skip is skeleton is empty
-      }
-      if (dim(skel_cent)[1] == 0) {
-        # Skip polygons that have no skeleton paths
-        next() 
+        next() # Skip if skeleton empty or invalid
       }
       
       # Filter out short lines
@@ -388,54 +387,40 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     # Save CHM with hedges masked out
     # Save classified raster with hedges masked out
     if (!is.null(hedges) && nrow(hedges) > 0) {
-      st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
+      #st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
+      hedges_list[[length(hedges_list) + 1]] <- hedges
 
       chm_filtered <- mask(chm_full_crop, hedges, inverse = TRUE)
-      terra::writeRaster(chm_filtered,
-                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-                         overwrite = TRUE)
+      chm_list[[length(chm_list) + 1]] <- chm_filtered
+      #terra::writeRaster(chm_filtered,
+      #                   glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+      #                   overwrite = TRUE)
       
 
-      filt_max_class_filt <- mask(filt_max_class, hedges, inverse = TRUE)
-      terra::writeRaster(filt_max_class_filt,
-                          glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
-                          overwrite = TRUE)
+      #filt_max_class_filt <- mask(filt_max_class, hedges, inverse = TRUE)
+      #terra::writeRaster(filt_max_class_filt,
+      #                    glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
+      #                    overwrite = TRUE)
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      terra::writeRaster(chm_full_crop,
-                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-                         overwrite = TRUE)
-      terra::writeRaster(filt_max_class,
-                         glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
-                         overwrite = TRUE)
+      chm_list[[length(chm_list) + 1]] <- chm_full_crop
+      #terra::writeRaster(chm_full_crop,
+      #                   glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+      #                   overwrite = TRUE)
+      #terra::writeRaster(filt_max_class,
+      #                   glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
+      #                   overwrite = TRUE)
     }
-
-    file.remove(
-      glue("0_VOM/Hedges/SS79_class_raster_mod_{row_start}_{col_start}.tif")
-    )
-    file.remove(
-      glue("0_VOM/Hedges/SS79_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
-    )
-
   }
 }
 
-#########################################
-# Merge rasters with GDAL in R
-#########################################
+# Merge all CHMs
+merged_chm <- do.call(terra::merge, chm_list)
+terra::writeRaster(merged_chm, glue("0_VOM/Hedges/CHMs/{tile_of_interest}_VOM_extracted_hedges.tif"), overwrite = TRUE)
 
-gdal_merge_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\Scripts\\gdal_merge.py"
-python_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\python.exe"
+# Merge all hedges (vector)
+if (length(hedges_list) > 0) {
+  merged_hedges <- do.call(rbind, hedges_list)
+  st_write(merged_hedges, glue("0_VOM/Hedges/Gpkgs/{tile_of_interest}_hedges.gpkg"), delete_dsn = TRUE)
+}
 
-output_file <- "Y:\\Forest Inventory\\0700_NonCore_Funded\\0726_TOW_Wales\\04_Spatial Analysis\\3_Test_Square\\VOM\\SS79_Class_Rast_hedges_extracted.tif"
-input_pattern <- "Y:\\Forest Inventory\\0700_NonCore_Funded\\0726_TOW_Wales\\04_Spatial Analysis\\3_Test_Square\\Hedges\\Rasters\\section_*.tif"
-input_files <- Sys.glob(input_pattern)
-
-args <- c(
-  gdal_merge_path,
-  "-o", shQuote(output_file),
-  "-of", "GTiff",
-  "-a_nodata", "-9999",
-  shQuote(input_files)
-)
-system2(command = python_path, args = args, wait = TRUE)
