@@ -101,13 +101,13 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     print(glue("row {row_start}, col {col_start}"))
 
     # Check if output file already exists - skip
-    #out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
+    out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
     #file_path <- glue("0_VOM/Hedges/Rasters/{out_path}.tif")
     #if (file.exists(file_path)) {
     #  print("The file exists!")
     #  next
     #}
-
+    
     # Define section boundaries
     row_end <- min(row_start + section_size - 1, nrow_chm)
     col_end <- min(col_start + section_size - 1, ncol_chm)
@@ -354,15 +354,6 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       hedges_sel <- hedges_sel[hedges_sel$mbcp < 30, ]
       
       hedges_sel <- merge(hedges_sel, other_dat, by = "id")
-
-      # filter hedges
-      # Calculate the adjusted centre line length
-      # Estimated at 8% over true centre line length, possible more like 10-12%, but using 8% as conservative
-      # ED : moved up in the script and avoided filtering for straightness twice
-      #hedges_sel$cnt_len_adj <- hedges_sel$cnt_length * 0.92
-      # ED : What's the reason for the calculation? Not used again in script.
-      #dim(hedges_sel[hedges_sel$cnt_len_adj < 20, ])[1] / dim(hedges_sel)[1] * 100 
-      #hedges_sel <- hedges_sel[hedges_sel$cnt_len_adj >= 20, ] # Remove very short hedges 
       
       # Get max rectangle area
       hedges_sel$max_rec_area  <-max_rectangle_area(hedges_sel$cnt_len_adj) 
@@ -387,29 +378,21 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     # Save CHM with hedges masked out
     # Save classified raster with hedges masked out
     if (!is.null(hedges) && nrow(hedges) > 0) {
-      #st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
-      hedges_list[[length(hedges_list) + 1]] <- hedges
+      st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
+      #hedges_list[[length(hedges_list) + 1]] <- hedges
 
       chm_filtered <- mask(chm_full_crop, hedges, inverse = TRUE)
       chm_list[[length(chm_list) + 1]] <- chm_filtered
-      #terra::writeRaster(chm_filtered,
-      #                   glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-      #                   overwrite = TRUE)
+      terra::writeRaster(chm_filtered,
+                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+                         overwrite = TRUE)
       
-
-      #filt_max_class_filt <- mask(filt_max_class, hedges, inverse = TRUE)
-      #terra::writeRaster(filt_max_class_filt,
-      #                    glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
-      #                    overwrite = TRUE)
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      chm_list[[length(chm_list) + 1]] <- chm_full_crop
-      #terra::writeRaster(chm_full_crop,
-      #                   glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-      #                   overwrite = TRUE)
-      #terra::writeRaster(filt_max_class,
-      #                   glue("0_VOM/Hedges/Rasters/{out_path}.tif"),
-      #                   overwrite = TRUE)
+      #chm_list[[length(chm_list) + 1]] <- chm_full_crop
+      terra::writeRaster(chm_full_crop,
+                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+                         overwrite = TRUE)
     }
   }
 }
@@ -423,4 +406,3 @@ if (length(hedges_list) > 0) {
   merged_hedges <- do.call(rbind, hedges_list)
   st_write(merged_hedges, glue("0_VOM/Hedges/Gpkgs/{tile_of_interest}_hedges.gpkg"), delete_dsn = TRUE)
 }
-
