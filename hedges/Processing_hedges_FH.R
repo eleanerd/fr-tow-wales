@@ -214,6 +214,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip small polygons
       if (area < 20) {
+        setTxtProgressBar(pb, pol)
         next()
       }
       
@@ -228,6 +229,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
+        setTxtProgressBar(pb, pol)
         next()
       }
 
@@ -239,6 +241,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
+        setTxtProgressBar(pb, pol)
         next()
       }
       
@@ -251,6 +254,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(poly_cleaned)[1] == 0)) {
+        setTxtProgressBar(pb, pol)
         next()
       }
 
@@ -266,6 +270,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
+        setTxtProgressBar(pb, pol)
         next()
       }
 
@@ -276,6 +281,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       narrow_parts2 <- narrow_parts2 %>% filter(area_m >= 20)
 
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
+        setTxtProgressBar(pb, pol)
         next()
       }
       #plot(narrow_parts$x, add = T, col = 'blue')
@@ -311,10 +317,12 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
         
         # Skip if cnt_path_guess fails
         if (nrow(skel_cent) == 0) {
+          setTxtProgressBar(pb, pol)
           next()
         }
         
       } else {
+        setTxtProgressBar(pb, pol)
         next() # Skip if skeleton empty or invalid
       }
       
@@ -323,6 +331,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       skel_cent$cnt_len_adj <- skel_cent$cnt_length * 0.92
       skel_cent <- skel_cent %>% filter(cnt_len_adj >= 20)
       if (dim(skel_cent)[1] == 0) {
+        setTxtProgressBar(pb, pol)
         next()
       }
 
@@ -338,6 +347,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       filtered_skel_cent <- skel_cent %>%
         filter(straightness > 0.5)
       if (dim(filtered_skel_cent)[1] == 0) {
+        setTxtProgressBar(pb, pol)
         next()
       }
 
