@@ -22,6 +22,7 @@ library(dplyr)
 library(centerline)
 library(smoothr)
 library(raster)
+library(foreach)
 
 tile_of_interest <- "SS79"
 
@@ -102,11 +103,11 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
     # Check if output file already exists - skip
     out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
-    #file_path <- glue("0_VOM/Hedges/Rasters/{out_path}.tif")
-    #if (file.exists(file_path)) {
-    #  print("The file exists!")
-    #  next
-    #}
+    file_path <- glue("0_VOM/Hedges/CHMs/{out_path}.tif")
+    if (file.exists(file_path)) {
+      print("The file exists!")
+      next
+    }
     
     # Define section boundaries
     row_end <- min(row_start + section_size - 1, nrow_chm)
@@ -176,8 +177,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
     system(glue('"{gdal_sieve}" -st 5 -8 -of GTiff "{raster_fp}" "{sieved_raster_fp}"'))
     
-    #file.remove(raster_fp) # Remove to save disk space
-    #rm(class_raster_mod) # free up memory
+    rm(class_raster_mod) # free up memory
     
     filt_max_class <- terra::rast(sieved_raster_fp)
     filt_max_class[filt_max_class == 0] <- NA
@@ -198,6 +198,9 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     msk6 <- filt6 == 2
     msk6[isFALSE(msk6)] <- NA 
     mask_poly <- as.polygons(msk6) %>% st_as_sf() %>% st_buffer(0.2) # this is used later
+    
+    file.remove(raster_fp)
+    file.remove(sieved_raster_fp)
     
     # Progress bar
     pb <- txtProgressBar(min = 0, max = length(canopy_area$x), style = 3)
@@ -293,15 +296,14 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Create skeleton of polygon
       skel_dense <- centerline::cnt_skeleton(narrow_parts, keep = 1.5)
-      
-      # Ensure skeleton is valid and non-empty
-      if (inherits(skel_dense, "sf") && nrow(skel_dense) > 0 &&
-          all(!st_is_empty(skel_dense)) &&
-          all(st_length(skel_dense) > units::set_units(0, "m"))) {
+
+      # Was getting error when skel_dense was made of multiple geometries
+      if (nrow(skel_dense) == 1) { #&&
+          #all(!st_is_empty(skel_dense)) &&
+          #all(st_length(skel_dense) > units::set_units(0, "m"))) {
         
         skel_dense <- st_make_valid(skel_dense)
         
-        # Try path extraction safely
         skel_cent <-centerline::cnt_path_guess(
           input = narrow_parts,
           skeleton = skel_dense
@@ -372,6 +374,8 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     }
 
     close(pb)
+    
+    # 
 
     # Save outputs
     # Save hedges as GPKG
@@ -382,7 +386,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       #hedges_list[[length(hedges_list) + 1]] <- hedges
 
       chm_filtered <- mask(chm_full_crop, hedges, inverse = TRUE)
-      chm_list[[length(chm_list) + 1]] <- chm_filtered
+      #chm_list[[length(chm_list) + 1]] <- chm_filtered
       terra::writeRaster(chm_filtered,
                          glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
                          overwrite = TRUE)
