@@ -8,16 +8,13 @@
 # Import libraries
 ###############################
 
-#import os
 import sys
 import pandas as pd
 import rasterio
 from rasterio import features
 from rasterio.mask import mask
-#from rasterio.crs import CRS
 from rasterio.windows import from_bounds
 from rasterio.warp import reproject, Resampling
-#from shapely.geometry import shape
 import numpy as np
 import geopandas as gpd
 from scipy import ndimage
@@ -39,26 +36,39 @@ wales_10km_footprint = gpd.read_file(fp)
 tile_footprint = wales_10km_footprint[wales_10km_footprint['tileref'] == tile_of_interest]
 tile_footprint = tile_footprint.set_crs('EPSG:27700')
 
+if tile_footprint.empty:
+    print(f'Tile {tile_of_interest} not found in Wales 10km squares footprint. Exiting.')
+    sys.exit()
+    
 #####################################
 # Remove pixels below 1.3m from CHM
 #####################################
 
 print('Removing pixels below 1.3m from CHM')
 
-chm_fp = f'{wd}/1_Reference_Data/1_Wales_LiDAR/Wales_CHM_2020_22_32bit.tif'
+chm_fp = f'C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/data/{tile_of_interest}_CHM.tif'
 
 with rasterio.open(chm_fp) as src:
 
-    window = from_bounds(*tile_footprint.total_bounds, transform=src.transform)
-    chm_data = src.read(1, window=window).astype('float32')
+    #window = from_bounds(*tile_footprint.total_bounds, transform=src.transform)
+    chm_data = src.read(1).astype('float32')
 
-    out_transform = src.window_transform(window)
+    out_transform = src.transform
     out_meta = src.meta.copy()
     chm_crs = src.crs
     
+    out_shape = (int(chm_data.shape[0]), int(chm_data.shape[1]))
+
     chm_data = np.where(chm_data < 1.3, np.nan, chm_data)
-    
-out_shape = (int(window.height), int(window.width))
+
+#################################
+# Skip tile if no data remains
+#################################
+
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
+
 
 #################################
 # Create dictionary OSMM terms
@@ -115,16 +125,23 @@ water_gdf = OSMM[OSMM["Surf_Obj"] == "Water"].copy()
 water_gdf = water_gdf.to_crs(chm_crs)
 
 # Rasterise mask_terms
-water_mask = features.rasterize(
-    [(geom, 1) for geom in water_gdf.geometry],
-    out_shape=out_shape,
-    transform=out_transform,
-    fill=0,
-    dtype="uint8"
-)
+if water_gdf.empty:
+    water_mask = np.zeros(out_shape, dtype="uint8")
+else:
+    water_mask = features.rasterize(
+        [(geom, 1) for geom in water_gdf.geometry],
+        out_shape=out_shape,
+        transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
 
 # Apply water mask to CHM
 chm_data = np.where(water_mask == 1, np.nan, chm_data)
+
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
 
 ###########################################
 # Mask out non-tree OSMM features from CHM
@@ -163,6 +180,10 @@ mask_mask = features.rasterize(
 combined_mask = (surface_mask == 1) | (mask_mask == 1)
 chm_data[combined_mask] = np.nan
 
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
+
 ###########################################
 # Mask out buildings from OpenStreetMap
 ###########################################
@@ -186,6 +207,10 @@ osm_buildings_mask = features.rasterize(
 
 osm_buildings_mask = osm_buildings_mask.astype(bool)
 chm_data[osm_buildings_mask] = np.nan
+
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
 
 ###########################################
 # Mask power cables
@@ -213,6 +238,10 @@ cables_mask = cables_mask & over_10m_mask
 
 chm_data[cables_mask] = np.nan
 
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
+
 ###########################################
 # Mask power structures from OpenStreetMap
 ###########################################
@@ -237,6 +266,10 @@ power_structures_mask = features.rasterize(
 
 power_structures_mask = power_structures_mask.astype(bool)
 chm_data[power_structures_mask] = np.nan
+
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
 
 # ####################################
 # # Save to file - with NFI still
