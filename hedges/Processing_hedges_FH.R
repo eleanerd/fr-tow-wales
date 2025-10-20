@@ -96,6 +96,10 @@ nrow_chm <- nrow(chm_ndvi_filt)
 section_size <- 1000
 overlap <- 10
 
+# Lists
+hedges_tiles <- list()
+chm_tiles <- list()
+
 # Iterate over sections (~100 per 10km tile)
 for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
   for (col_start in seq(1, ncol_chm, by = section_size - overlap)) {
@@ -104,10 +108,10 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     # Check if output file already exists - skip
     out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start, "_parallel")
     file_path <- glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg")
-    if (file.exists(file_path)) {
-      print("The file exists!")
-      next
-    }
+    #if (file.exists(file_path)) {
+    #  print("The file exists!")
+    #  next
+    #}
     
     # Define section boundaries
     row_end <- min(row_start + section_size - 1, nrow_chm)
@@ -199,8 +203,8 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     msk6[isFALSE(msk6)] <- NA 
     mask_poly <- as.polygons(msk6) %>% st_as_sf() %>% st_buffer(0.2) # this is used later
     
-    file.remove(raster_fp)
-    file.remove(sieved_raster_fp)
+    #file.remove(raster_fp)
+    #file.remove(sieved_raster_fp)
     
     # TO DO: parallelise this loop
     print("Finding hedges in polygons...")
@@ -398,21 +402,21 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     # Save CHM with hedges masked out
     # Save classified raster with hedges masked out
     if (!is.null(hedges) && nrow(hedges) > 0) {
-      st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
-      #hedges_list[[length(hedges_list) + 1]] <- hedges
+      #st_write(hedges, glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg"), append=FALSE)
+      hedges_tiles[[length(hedges_tiles) + 1]] <- hedges
 
       chm_filtered <- mask(chm_full_crop, hedges, inverse = TRUE)
-      #chm_list[[length(chm_list) + 1]] <- chm_filtered
-      terra::writeRaster(chm_filtered,
-                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-                         overwrite = TRUE)
+      chm_tiles[[length(chm_tiles) + 1]] <- chm_filtered
+      #terra::writeRaster(chm_filtered,
+      #                   glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+      #                   overwrite = TRUE)
       
     } else {
       print(glue("No hedges found for {out_path}, skipping GPKG"))
-      #chm_list[[length(chm_list) + 1]] <- chm_full_crop
-      terra::writeRaster(chm_full_crop,
-                         glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
-                         overwrite = TRUE)
+      chm_tiles[[length(chm_tiles) + 1]] <- chm_full_crop
+      #terra::writeRaster(chm_full_crop,
+      #                   glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
+      #                   overwrite = TRUE)
     }
     
     rm(hedges)
@@ -421,11 +425,9 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 }
 
 # Merge all CHMs
-merged_chm <- do.call(terra::merge, chm_list)
+merged_chm <- do.call(terra::merge, chm_tiles)
 terra::writeRaster(merged_chm, glue("0_VOM/Hedges/CHMs/{tile_of_interest}_VOM_extracted_hedges.tif"), overwrite = TRUE)
 
 # Merge all hedges (vector)
-if (length(hedges_list) > 0) {
-  merged_hedges <- do.call(rbind, hedges_list)
-  st_write(merged_hedges, glue("0_VOM/Hedges/Gpkgs/{tile_of_interest}_hedges.gpkg"), delete_dsn = TRUE)
-}
+merged_hedges <- do.call(rbind, hedges_tiles)
+st_write(merged_hedges, glue("0_VOM/Hedges/Gpkgs/{tile_of_interest}_hedges.gpkg"), delete_dsn = TRUE)
