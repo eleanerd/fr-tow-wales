@@ -23,6 +23,10 @@ library(centerline)
 library(smoothr)
 library(raster)
 library(foreach)
+library(doParallel)
+
+library(lwgeom)
+library(purrr)
 
 tile_of_interest <- "SS79"
 
@@ -92,18 +96,14 @@ nrow_chm <- nrow(chm_ndvi_filt)
 section_size <- 1000
 overlap <- 10
 
-# Before the loop, initialize lists to store outputs
-hedges_list <- list()
-chm_list <- list()
-
 # Iterate over sections (~100 per 10km tile)
 for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
   for (col_start in seq(1, ncol_chm, by = section_size - overlap)) {
     print(glue("row {row_start}, col {col_start}"))
 
     # Check if output file already exists - skip
-    out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start)
-    file_path <- glue("0_VOM/Hedges/CHMs/{out_path}.tif")
+    out_path <- paste0(tile_of_interest, "_section_", row_start, "_", col_start, "_parallel")
+    file_path <- glue("0_VOM/Hedges/Gpkgs/{out_path}.gpkg")
     if (file.exists(file_path)) {
       print("The file exists!")
       next
@@ -202,24 +202,39 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     file.remove(raster_fp)
     file.remove(sieved_raster_fp)
     
-    # Progress bar
-    pb <- txtProgressBar(min = 0, max = length(canopy_area$x), style = 3)
+    # TO DO: parallelise this loop
+    print("Finding hedges in polygons...")
+
+    # Register parallel backend
+    cl <- makeCluster(detectCores() - 1) # Leave some cores free
+    registerDoParallel(cl)
 
     # Find hedges
-    hedges <- NULL
-    for (pol in seq_along(canopy_area$x)) {
+    #hedges <- NULL
+    #for (pol in seq_along(canopy_area$x)) {
+    hedges_list <- foreach(
+      pol = seq_along(canopy_area$x),
+      .packages = c("sf",
+                    "smoothr",
+                    "centerline",
+                    "dplyr",
+                    "lwgeom",
+                    "purrr"),
+      .errorhandling = "pass"
+    ) %dopar% {
 
       poly <- canopy_area$x[pol]
-      area <- st_area(poly) %>% units::drop_units()
+      area <- as.numeric(st_area(poly))
 
       # Skip small polygons
       if (area < 20) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
-      
-      shrunk <- st_buffer(poly, -2.49, endCapStyle = 'FLAT') # Buffer inward by a small amount
-      regrown <- st_buffer(shrunk, 2.6, endCapStyle = 'FLAT') # Buffer back outward
+
+      # Buffer inward by a small amount
+      shrunk <- st_buffer(poly, -2.49, endCapStyle = "FLAT")
+      # Buffer back outward
+      regrown <- st_buffer(shrunk, 2.6, endCapStyle = "FLAT")
 
       # Subtract to get narrow border regions
       narrow_parts1 <- st_difference(poly, regrown) %>%
@@ -229,22 +244,17 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
 
       narrow_parts1$id <- c(1:nrow(narrow_parts1))
-      narrow_parts1$area_m <- narrow_parts1 %>%
-        st_area() %>%
-        units::drop_units()
+      narrow_parts1$area_m <- as.numeric(st_area(narrow_parts1))
       narrow_parts1 <- narrow_parts1 %>% filter(area_m >= 20)
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts1)[1] == 0)) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
-      
       ## What if mask_poly is empty? Aka there's no polygons over 6m in section
 
       # Remove pixels over 6m
@@ -254,8 +264,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(poly_cleaned)[1] == 0)) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
 
       # Rerun previous part
@@ -270,8 +279,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
 
       # Skip if no narrow parts
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
 
       narrow_parts2$id <- c(1:nrow(narrow_parts2))
@@ -281,8 +289,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       narrow_parts2 <- narrow_parts2 %>% filter(area_m >= 20)
 
       if (isTRUE(dim(narrow_parts2)[1] == 0)) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
       #plot(narrow_parts$x, add = T, col = 'blue')
 
@@ -304,26 +311,19 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       skel_dense <- centerline::cnt_skeleton(narrow_parts, keep = 1.5)
 
       # Was getting error when skel_dense was made of multiple geometries
-      if (nrow(skel_dense) == 1) { #&&
-          #all(!st_is_empty(skel_dense)) &&
-          #all(st_length(skel_dense) > units::set_units(0, "m"))) {
-        
-        skel_dense <- st_make_valid(skel_dense)
-        
-        skel_cent <-centerline::cnt_path_guess(
-          input = narrow_parts,
-          skeleton = skel_dense
-        )
-        
-        # Skip if cnt_path_guess fails
-        if (nrow(skel_cent) == 0) {
-          setTxtProgressBar(pb, pol)
-          next()
-        }
-        
-      } else {
-        setTxtProgressBar(pb, pol)
-        next() # Skip if skeleton empty or invalid
+      if (nrow(skel_dense) == 0) {
+        return(NULL)
+      }
+
+      # Get centerline or return NULL if fails
+      skel_dense <- st_make_valid(skel_dense)
+      skel_cent <- centerline::cnt_path_guess(
+        input = narrow_parts,
+        skeleton = skel_dense
+      )
+
+      if (nrow(skel_cent) == 0) {
+        return(NULL)
       }
       
       # Filter out short lines
@@ -331,8 +331,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       skel_cent$cnt_len_adj <- skel_cent$cnt_length * 0.92
       skel_cent <- skel_cent %>% filter(cnt_len_adj >= 20)
       if (dim(skel_cent)[1] == 0) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
 
       # Ggt straightness, auclid and length
@@ -347,8 +346,7 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       filtered_skel_cent <- skel_cent %>%
         filter(straightness > 0.5)
       if (dim(filtered_skel_cent)[1] == 0) {
-        setTxtProgressBar(pb, pol)
-        next()
+        return(NULL)
       }
 
       other_dat <- filtered_skel_cent %>% st_drop_geometry()
@@ -377,15 +375,23 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
       
       # Calculate length-area-ratio
       hedges_sel$lar = st_length(st_boundary(hedges_sel)) / st_area(hedges_sel) %>%units::drop_units()
-      
-      hedges <- rbind(hedges, hedges_sel)
 
-      setTxtProgressBar(pb, pol)
+      #hedges <- rbind(hedges, hedges_sel)
+      return(hedges_sel)
     }
-
-    close(pb)
     
-    # 
+    # Combine only valid sf results
+    hedges_list <- Filter(function(x) inherits(x, "sf") && nrow(x) > 0, hedges_list)
+    
+    if (length(hedges_list) > 0) {
+      hedges <- do.call(rbind, hedges_list)
+    } else {
+      hedges <- NULL
+    }
+    
+    # Clean up cluster after parallel work
+    stopCluster(cl)
+    registerDoSEQ()
 
     # Save outputs
     # Save hedges as GPKG
@@ -408,6 +414,9 @@ for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
                          glue("0_VOM/Hedges/CHMs/{out_path}.tif"),
                          overwrite = TRUE)
     }
+    
+    rm(hedges)
+    
   }
 }
 
