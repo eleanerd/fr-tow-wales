@@ -244,6 +244,8 @@ chm_data[power_structures_mask] = np.nan
 
 chm_data_ndvi = chm_data.copy()
 
+print('Resampling NDVI')
+
 ndvi_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite.tif'
 ndvi_resampled_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite_resampled.tif'
 
@@ -267,6 +269,8 @@ with rasterio.open(ndvi_fp) as src:
             dst_height=out_meta['height'],
             resampling=Resampling.bilinear
         )
+
+print('Applying NDVI threshold')
 
 with rasterio.open(ndvi_resampled_fp) as src:
     ndvi_array = src.read(1).astype('float32')
@@ -308,6 +312,8 @@ chm_data_ndvi_masked = np.where(keep_mask[labeled], chm_data_ndvi, chm_data_ndvi
 ####################################
 # Save to file - without NFI
 ####################################
+
+print('Saving VOM CHM with NDVI mask to file')
 
 out_meta.update({
     'width' : out_shape[1],
