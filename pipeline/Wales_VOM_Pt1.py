@@ -8,6 +8,7 @@
 # Import libraries
 ###############################
 
+import os
 import sys
 import pandas as pd
 import rasterio
@@ -26,6 +27,12 @@ from skimage import morphology
 
 tile_of_interest = sys.argv[1]
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
+
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif'
+
+if os.path.exists(output_path):
+    print(f'Output for tile {tile_of_interest} already exists. Exiting.')
+    sys.exit()
 
 ###############################
 # Get extent of tile 
