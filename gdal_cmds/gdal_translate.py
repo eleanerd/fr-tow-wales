@@ -7,6 +7,7 @@
 import os
 import subprocess
 import geopandas as gpd
+import json
 
 # Paths
 CHM_PATH="Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/1_Wales_LiDAR/Wales_CHM_2020_22_32bit.tif"
@@ -25,6 +26,20 @@ for idx, row in gdf.iterrows():
 
     if os.path.exists(output_path):
         print(f"File {output_path} already exists. Skipping...")
+        continue
+
+    info = subprocess.run([
+        r"C:\Program Files\QGIS 3.44.1\bin\gdalinfo.exe",
+        "-json", CHM_PATH
+    ], capture_output=True, text=True)
+
+    meta = json.loads(info.stdout)
+    ulx, uly = meta["cornerCoordinates"]["upperLeft"]
+    lrx, lry = meta["cornerCoordinates"]["lowerRight"]
+
+    # Don't run command if bounds are out of tif extent
+    if not (ulx <= minx <= lrx) and (ulx <= maxx <= lrx) and (lry <= miny <= uly) and (lry <= maxy <= uly):
+        print(f"Tile {tileref} is out of bounds. Skipping...")
         continue
 
     cmd = [
