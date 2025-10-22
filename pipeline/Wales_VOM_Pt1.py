@@ -21,6 +21,13 @@ import geopandas as gpd
 from scipy import ndimage
 from skimage import morphology
 
+# Suppress warnings from opening 'wales_osm_clean.gpkg' with multiple layers
+import warnings
+warnings.filterwarnings("ignore", message="More than one layer found")
+
+# To Do
+# Don't rasterize if gdf is empty - apply to all masks 
+
 ###############################
 # Settings / Inputs 
 ###############################
@@ -28,7 +35,7 @@ from skimage import morphology
 tile_of_interest = sys.argv[1]
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked_05m.tif'
 
 if os.path.exists(output_path):
     print(f'Output for tile {tile_of_interest} already exists. Exiting.')
@@ -66,7 +73,7 @@ with rasterio.open(chm_fp) as src:
     
     out_shape = (int(chm_data.shape[0]), int(chm_data.shape[1]))
 
-    chm_data = np.where(chm_data < 1.3, np.nan, chm_data)
+    chm_data = np.where(chm_data < 0.5, np.nan, chm_data)
 
 #################################
 # Skip tile if no data remains
@@ -75,7 +82,6 @@ with rasterio.open(chm_fp) as src:
 if np.all(np.isnan(chm_data)):
     print('No valid CHM data remains, skipping tile.')
     sys.exit()
-
 
 #################################
 # Create dictionary OSMM terms
@@ -105,7 +111,8 @@ if OSMM.crs != chm_crs:
     OSMM = OSMM.to_crs(chm_crs)
 
 # Update features with blank 'descterm' field
-OSMM["descterm"].replace('', np.nan, inplace=True)
+#OSMM["descterm"].replace('', np.nan, inplace=True)
+OSMM["descterm"] = OSMM["descterm"].replace('', np.nan)
 
 for value in OSMM["descgroup"].unique():
     OSMM.loc[
@@ -198,7 +205,9 @@ if np.all(np.isnan(chm_data)):
 print('Masking out buildings from OpenStreetMap')
 
 osm_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/wales_osm_clean.gpkg'
-osm_polygons = gpd.read_file(osm_fp, layer='multipolygons', bbox=tile_footprint)
+osm_polygons = gpd.read_file(osm_fp,
+                             layer='multipolygons',
+                             bbox=tile_footprint)
 osm_buildings = osm_polygons[osm_polygons['building'].notna()].copy()
 osm_buildings = osm_buildings.to_crs(chm_crs)
 osm_buildings["geometry"] = osm_buildings.buffer(2)
@@ -291,7 +300,7 @@ out_meta.update({
 
 chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_05m.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data, 1)
 
@@ -375,6 +384,8 @@ out_meta.update({
 
 chm_data_ndvi_masked = np.where(np.isnan(chm_data_ndvi_masked), -9999.0, chm_data_ndvi_masked)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked_05m.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data_ndvi_masked, 1)
+
+print(f'Processing complete for tile {tile_of_interest}.')
