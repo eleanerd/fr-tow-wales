@@ -28,7 +28,7 @@ from skimage import morphology
 tile_of_interest = 'SH32'
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked_coastline_05m.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
 
 if os.path.exists(output_path):
     print(f'Output for tile {tile_of_interest} already exists. Exiting.')
@@ -80,7 +80,21 @@ if wales_boundary.crs != chm_crs:
 
 # Mask CHM to Wales boundary
 print('Masking CHM to Wales boundary')
-chm_data = np.where(~mask(chm_data, [wales_boundary]), np.nan, chm_data)
+
+land_mask = features.rasterize(
+    [(geom, 1) for geom in wales_boundary.geometry],
+    out_shape=out_shape,
+    transform=out_transform,
+    fill=0,
+    dtype="uint8"
+)
+
+# Apply land mask to CHM
+chm_data = np.where(land_mask == 0, np.nan, chm_data)
+
+if np.all(np.isnan(chm_data)):
+    print('No valid CHM data remains, skipping tile.')
+    sys.exit()
 
 #################################
 # Skip tile if no data remains
@@ -89,7 +103,6 @@ chm_data = np.where(~mask(chm_data, [wales_boundary]), np.nan, chm_data)
 if np.all(np.isnan(chm_data)):
     print('No valid CHM data remains, skipping tile.')
     sys.exit()
-
 
 #################################
 # Create dictionary OSMM terms
@@ -289,7 +302,7 @@ else:
 print('Masking out power structures from CHM')
 
 power_structures_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/osm_power_structures_v2.gpkg'
-power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint)
+power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint, driver='GPKG')
 
 power_structures = power_structures[power_structures['power_source'] != 'solar'].copy()
 
@@ -358,7 +371,7 @@ out_meta.update({
 
 chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_coastline_05m.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data, 1)
 
@@ -448,6 +461,6 @@ out_meta.update({
 
 chm_data_ndvi_masked = np.where(np.isnan(chm_data_ndvi_masked), -9999.0, chm_data_ndvi_masked)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_masked_coastline_05m.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data_ndvi_masked, 1)
