@@ -21,6 +21,13 @@ import geopandas as gpd
 from scipy import ndimage
 from skimage import morphology
 
+# Suppress warnings from opening 'wales_osm_clean.gpkg' with multiple layers
+import warnings
+warnings.filterwarnings("ignore", message="More than one layer found")
+
+# To Do
+# Don't rasterize if gdf is empty - apply to all masks 
+
 ###############################
 # Settings / Inputs 
 ###############################
@@ -132,7 +139,8 @@ if OSMM.crs != chm_crs:
     OSMM = OSMM.to_crs(chm_crs)
 
 # Update features with blank 'descterm' field
-OSMM["descterm"].replace('', np.nan, inplace=True)
+#OSMM["descterm"].replace('', np.nan, inplace=True)
+OSMM["descterm"] = OSMM["descterm"].replace('', np.nan)
 
 for value in OSMM["descgroup"].unique():
     OSMM.loc[
@@ -233,7 +241,9 @@ if np.all(np.isnan(chm_data)):
 print('Masking out buildings from OpenStreetMap')
 
 osm_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/wales_osm_clean.gpkg'
-osm_polygons = gpd.read_file(osm_fp, layer='multipolygons', bbox=tile_footprint)
+osm_polygons = gpd.read_file(osm_fp,
+                             layer='multipolygons',
+                             bbox=tile_footprint)
 osm_buildings = osm_polygons[osm_polygons['building'].notna()].copy()
 
 if osm_buildings.empty:
@@ -371,7 +381,7 @@ out_meta.update({
 
 chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_05m.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data, 1)
 
@@ -464,3 +474,5 @@ chm_data_ndvi_masked = np.where(np.isnan(chm_data_ndvi_masked), -9999.0, chm_dat
 output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data_ndvi_masked, 1)
+
+print(f'Processing complete for tile {tile_of_interest}.')
