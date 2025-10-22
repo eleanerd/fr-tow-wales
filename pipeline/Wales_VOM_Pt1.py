@@ -143,12 +143,12 @@ else:
         dtype="uint8"
     )
 
-# Apply water mask to CHM
-chm_data = np.where(water_mask == 1, np.nan, chm_data)
+    # Apply water mask to CHM
+    chm_data = np.where(water_mask == 1, np.nan, chm_data)
 
-if np.all(np.isnan(chm_data)):
-    print('No valid CHM data remains, skipping tile.')
-    sys.exit()
+    if np.all(np.isnan(chm_data)):
+        print('No valid CHM data remains, skipping tile.')
+        sys.exit()
 
 ###########################################
 # Mask out non-tree OSMM features from CHM
@@ -165,23 +165,31 @@ surface_gdf["geometry"] = surface_gdf.buffer(2)
 mask_gdf = OSMM[OSMM["Surf_Obj"] == "Mask"].copy()
 mask_gdf = mask_gdf.to_crs(chm_crs)
 
-# Rasterise buffered surface_terms
-surface_mask = features.rasterize(
+if surface_gdf.empty:
+    print('No surface_terms found in tile, skipping surface_term masking.')
+    surface_mask = np.zeros(out_shape, dtype="uint8")
+else:
+    # Rasterise buffered surface_terms
+    surface_mask = features.rasterize(
         [(geom, 1) for geom in surface_gdf.geometry],
         out_shape=out_shape,
         transform=out_transform,
         fill=0,
         dtype="uint8"
-)
+    )
 
-# Rasterise mask_terms
-mask_mask = features.rasterize(
+if mask_gdf.empty:
+    print('No mask_terms found in tile, skipping mask_term masking.')
+    mask_mask = np.zeros(out_shape, dtype="uint8")
+else:
+    # Rasterise mask_terms
+    mask_mask = features.rasterize(
         [(geom, 1) for geom in mask_gdf.geometry],
         out_shape=out_shape,
         transform=out_transform,
         fill=0,
         dtype="uint8"
-)
+    )
 
 # Apply both masks
 combined_mask = (surface_mask == 1) | (mask_mask == 1)
@@ -200,24 +208,29 @@ print('Masking out buildings from OpenStreetMap')
 osm_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/wales_osm_clean.gpkg'
 osm_polygons = gpd.read_file(osm_fp, layer='multipolygons', bbox=tile_footprint)
 osm_buildings = osm_polygons[osm_polygons['building'].notna()].copy()
-osm_buildings = osm_buildings.to_crs(chm_crs)
-osm_buildings["geometry"] = osm_buildings.buffer(2)
 
-# Rasterise buildings
-osm_buildings_mask = features.rasterize(
-    [(geom, 1) for geom in osm_buildings.geometry],
-    out_shape=out_shape,
-    transform=out_transform,
-    fill=0,
-    dtype="uint8"
-)
+if osm_buildings.empty:
+    print('No buildings found in tile, skipping building masking.')
+else:
 
-osm_buildings_mask = osm_buildings_mask.astype(bool)
-chm_data[osm_buildings_mask] = np.nan
+    osm_buildings = osm_buildings.to_crs(chm_crs)
+    osm_buildings["geometry"] = osm_buildings.buffer(2)
 
-if np.all(np.isnan(chm_data)):
-    print('No valid CHM data remains, skipping tile.')
-    sys.exit()
+    # Rasterise buildings
+    osm_buildings_mask = features.rasterize(
+        [(geom, 1) for geom in osm_buildings.geometry],
+        out_shape=out_shape,
+        transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
+
+    osm_buildings_mask = osm_buildings_mask.astype(bool)
+    chm_data[osm_buildings_mask] = np.nan
+
+    if np.all(np.isnan(chm_data)):
+        print('No valid CHM data remains, skipping tile.')
+        sys.exit()
 
 ###########################################
 # Mask power cables
@@ -229,25 +242,31 @@ cables_fp = f'{wd}/1_Reference_Data/10_Power_Lines/OHL_buffered.gpkg'
 cables = gpd.read_file(cables_fp)
 cables = cables.set_crs(chm_crs) 
 
-# Rasterise cables
-cables_mask = features.rasterize(
-    [(geom, 1) for geom in cables.geometry],
-    out_shape=out_shape,
-    transform=out_transform,
-    fill=0,
-    dtype="uint8"
-)
+if cables.empty:
+    print('No power cables found in tile, skipping cable masking.')
+else:
+    if cables.crs != chm_crs:
+        cables = cables.to_crs(chm_crs)
 
-cables_mask = cables_mask.astype(bool)
+    # Rasterise cables
+    cables_mask = features.rasterize(
+        [(geom, 1) for geom in cables.geometry],
+        out_shape=out_shape,
+        transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
 
-over_10m_mask = chm_data > 10
-cables_mask = cables_mask & over_10m_mask
+    cables_mask = cables_mask.astype(bool)
 
-chm_data[cables_mask] = np.nan
+    over_10m_mask = chm_data > 10
+    cables_mask = cables_mask & over_10m_mask
 
-if np.all(np.isnan(chm_data)):
-    print('No valid CHM data remains, skipping tile.')
-    sys.exit()
+    chm_data[cables_mask] = np.nan
+
+    if np.all(np.isnan(chm_data)):
+        print('No valid CHM data remains, skipping tile.')
+        sys.exit()
 
 ###########################################
 # Mask power structures from OpenStreetMap
@@ -260,23 +279,57 @@ power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint)
 
 power_structures = power_structures[power_structures['power_source'] != 'solar'].copy()
 
-if power_structures.crs != chm_crs:
-    power_structures = power_structures.to_crs(chm_crs)
+if power_structures.empty:
+    print('No power structures found in tile, skipping power structure masking.')
+else:
+        
+    if power_structures.crs != chm_crs:
+        power_structures = power_structures.to_crs(chm_crs)
 
-power_structures_mask = features.rasterize(
-    [(geom, 1) for geom in power_structures.geometry],
-    out_shape=out_shape,
-    transform=out_transform,
-    fill=0,
-    dtype="uint8"
-)
+    power_structures_mask = features.rasterize(
+        [(geom, 1) for geom in power_structures.geometry],
+        out_shape=out_shape,
+        transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
 
-power_structures_mask = power_structures_mask.astype(bool)
-chm_data[power_structures_mask] = np.nan
+    power_structures_mask = power_structures_mask.astype(bool)
+    chm_data[power_structures_mask] = np.nan
 
-if np.all(np.isnan(chm_data)):
-    print('No valid CHM data remains, skipping tile.')
-    sys.exit()
+    if np.all(np.isnan(chm_data)):
+        print('No valid CHM data remains, skipping tile.')
+        sys.exit()
+
+###########################################
+# Mask out coastline
+###########################################
+
+coastline_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/osm_coastline_buffered_50m.gpkg'
+coastline = gpd.read_file(coastline_fp, bbox=tile_footprint)
+
+# Check to see if gpkg is empty
+if coastline.empty:
+    print('No coastline features found in tile, skipping coastline masking.')
+else:
+    if coastline.crs != chm_crs:
+        coastline = coastline.to_crs(chm_crs)
+
+    coastline_mask = features.rasterize(
+        [(geom, 1) for geom in coastline.geometry],
+        out_shape=out_shape,
+        transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
+
+    coastline_mask = coastline_mask.astype(bool)
+    chm_data[coastline_mask] = np.nan
+
+    if np.all(np.isnan(chm_data)):
+        print('No valid CHM data remains, skipping tile.')
+        sys.exit()
+
 
 # ####################################
 # # Save to file - with NFI still
