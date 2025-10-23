@@ -32,8 +32,10 @@ warnings.filterwarnings("ignore", message="More than one layer found")
 # Settings / Inputs 
 ###############################
 
-tile_of_interest = 'SH32'
+tile_of_interest = sys.argv[1] 
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
+
+print('Processing tile:', tile_of_interest)
 
 output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
 
@@ -312,7 +314,7 @@ else:
 print('Masking out power structures from CHM')
 
 power_structures_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/osm_power_structures_v2.gpkg'
-power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint, driver='GPKG')
+power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint)
 
 power_structures = power_structures[power_structures['power_source'] != 'solar'].copy()
 
@@ -381,7 +383,7 @@ out_meta.update({
 
 chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_05m.tif'
+output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data, 1)
 
