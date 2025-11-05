@@ -11,6 +11,6 @@ for file in $files; do
         tile_name=${file%%_*}
         tiles+=("$tile_name")
         
-        python Wales_VOM_Pt1.py "$tile_name"
+        python Wales_VOM_Pt2.py "$tile_name"
     fi
-done 
+done
