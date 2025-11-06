@@ -28,7 +28,7 @@ wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis
 
 print('Processing tile:', tile_of_interest)
 
-output_path = f'{wd}/0_VOM/VOM/{tile_of_interest}_VOM.tif'
+output_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt2/{tile_of_interest}_VOM.tif'
 
 if os.path.exists(output_path):
     print(f'Output for tile {tile_of_interest} already exists. Exiting.')
@@ -48,7 +48,7 @@ tile_footprint = tile_footprint.set_crs('EPSG:27700')
 # Load in CHM
 #############################################
 
-chm_path = f'{wd}/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI.tif'
+chm_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI.tif'
 
 with rasterio.open(chm_path) as src:
     chm_data = src.read(1).astype('float32')
@@ -62,7 +62,7 @@ with rasterio.open(chm_path) as src:
 
 print('Masking out hedges')
 
-hedge_gpkg_fp = f'{wd}/0_VOM/Hedges/Gpkgs/{tile_of_interest}_hedges.gpkg'
+hedge_gpkg_fp = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/Hedges/{tile_of_interest}_hedges_dissolved.gpkg'
 hedge_gdf = gpd.read_file(hedge_gpkg_fp, bbox=tile_footprint)
 
 # Reproject hedges to match CHM
