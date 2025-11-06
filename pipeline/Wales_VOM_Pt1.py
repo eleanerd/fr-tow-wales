@@ -32,11 +32,10 @@ warnings.filterwarnings("ignore", message="More than one layer found")
 # Settings / Inputs 
 ###############################
 
-tile_of_interest = 'SH32'
+tile_of_interest = sys.argv[1] 
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
-
+output_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif'
 if os.path.exists(output_path):
     print(f'Output for tile {tile_of_interest} already exists. Exiting.')
     sys.exit()
@@ -170,6 +169,11 @@ water_gdf = water_gdf.to_crs(chm_crs)
 if water_gdf.empty:
     water_mask = np.zeros(out_shape, dtype="uint8")
 else:
+    
+    water_gdf["geometry"] = water_gdf.buffer(-6)
+    water_gdf["geometry"] = water_gdf.buffer(4)
+    water_gdf = water_gdf[~water_gdf.is_empty]
+
     water_mask = features.rasterize(
         [(geom, 1) for geom in water_gdf.geometry],
         out_shape=out_shape,
@@ -312,7 +316,7 @@ else:
 print('Masking out power structures from CHM')
 
 power_structures_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/osm_power_structures_v2.gpkg'
-power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint, driver='GPKG')
+power_structures = gpd.read_file(power_structures_fp, bbox=tile_footprint)
 
 power_structures = power_structures[power_structures['power_source'] != 'solar'].copy()
 
@@ -341,6 +345,8 @@ else:
 ###########################################
 # Mask out coastline
 ###########################################
+
+print('Masking out coastline')
 
 coastline_fp = f'{wd}/1_Reference_Data/11_OpenStreetMap/osm_coastline_buffered_50m.gpkg'
 coastline = gpd.read_file(coastline_fp, bbox=tile_footprint)
@@ -381,7 +387,7 @@ out_meta.update({
 
 chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_05m.tif'
+output_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data, 1)
 
@@ -391,31 +397,29 @@ with rasterio.open(output_path, "w", **out_meta) as dst:
 
 chm_data_ndvi = chm_data.copy()
 
-print('Resampling NDVI')
-
-ndvi_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite.tif'
+#ndvi_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite.tif'
 ndvi_resampled_fp = f'{wd}/1_Reference_Data/8_NDVI_and_NDWI/ndvi/{tile_of_interest}_ndvi_composite_resampled.tif'
 
 # Resample NDVI raster to match CHM raster (1m2)
-with rasterio.open(ndvi_fp) as src:
-    dst_meta = out_meta.copy()
-    dst_meta.update({
-        "dtype": src.meta["dtype"],  # keep original dtype
-        "count": 1
-    })
+# with rasterio.open(ndvi_fp) as src:
+#     dst_meta = out_meta.copy()
+#     dst_meta.update({
+#         "dtype": src.meta["dtype"],  # keep original dtype
+#         "count": 1
+#     })
 
-    with rasterio.open(ndvi_resampled_fp, 'w', **dst_meta) as dst:
-        reproject(
-            source=rasterio.band(src,1),
-            destination=rasterio.band(dst,1),
-            src_transform=src.transform,
-            src_crs=src.crs,
-            dst_transform=out_transform,
-            dst_crs=out_meta['crs'],
-            dst_width=out_meta['width'],
-            dst_height=out_meta['height'],
-            resampling=Resampling.bilinear
-        )
+#     with rasterio.open(ndvi_resampled_fp, 'w', **dst_meta) as dst:
+#         reproject(
+#             source=rasterio.band(src,1),
+#             destination=rasterio.band(dst,1),
+#             src_transform=src.transform,
+#             src_crs=src.crs,
+#             dst_transform=out_transform,
+#             dst_crs=out_meta['crs'],
+#             dst_width=out_meta['width'],
+#             dst_height=out_meta['height'],
+#             resampling=Resampling.bilinear
+#         )
 
 print('Applying NDVI threshold')
 
@@ -456,6 +460,37 @@ chm_data_ndvi_masked = np.where(shrunken_mask, chm_data_ndvi, np.nan)
 # Add back data from small pixel clump
 chm_data_ndvi_masked = np.where(keep_mask[labeled], chm_data_ndvi, chm_data_ndvi_masked)
 
+###########################################
+# Mask out built up areas
+###########################################
+
+print('Masking out built up areas')
+
+built_up_areas_fp = f'{wd}\\1_Reference_Data\\13_OS_Built_Up_Areas\\OS_Open_Built_Up_Areas_GeoPackage\\os_open_built_up_areas.gpkg'
+built_up_areas = gpd.read_file(built_up_areas_fp, layer='os_open_built_up_areas', bbox=tile_footprint)
+built_up_areas = built_up_areas.set_crs(chm_crs)
+built_up_areas["geometry"] = built_up_areas.buffer(-10)
+
+if built_up_areas.empty:
+    print('No built up areas found in tile, skipping cable masking.')
+else:
+    if built_up_areas.crs != chm_crs:
+        built_up_areas = built_up_areas.to_crs(chm_crs)
+
+    # Rasterise cables
+    built_up_areas_mask = features.rasterize(
+        [(geom, 1) for geom in built_up_areas.geometry],
+        out_shape=out_shape,
+        transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
+
+    built_up_areas_mask = built_up_areas_mask.astype(bool)
+
+    chm_data[built_up_areas_mask] = np.nan
+
+
 ####################################
 # Save to file - without NFI
 ####################################
@@ -471,7 +506,7 @@ out_meta.update({
 
 chm_data_ndvi_masked = np.where(np.isnan(chm_data_ndvi_masked), -9999.0, chm_data_ndvi_masked)
 
-output_path = f'{wd}/1_Reference_Data/0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
+output_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data_ndvi_masked, 1)
 
