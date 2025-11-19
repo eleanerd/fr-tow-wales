@@ -229,10 +229,14 @@ chm_data_ndvi_masked = np.where(
 print('Saving to file')
 
 chm_meta.update({
-    'width' : (chm_data.shape)[1], # out_shape[1],
-    'height' : (chm_data.shape)[0], # out_shape[0],
+    'width' : (chm_data.shape)[1],
+    'height' : (chm_data.shape)[0],
     'crs' : chm_crs,
-    'transform' : chm_transform # out_transform,
+    'transform' : chm_transform,
+    "nodata": -9999.0,
+    "dtype": "float32",
+    "compress": "LZW",
+    "tiled": True
 })
 
 chm_data_ndvi_masked = np.where(
