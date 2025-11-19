@@ -15,6 +15,10 @@ from rasterio import features
 import numpy as np
 import geopandas as gpd
 
+# Suppress warnings from opening 'wales_osm_clean.gpkg' with multiple layers
+import warnings
+warnings.filterwarnings("ignore", message="More than one layer found")
+
 ###############################
 # Settings / Inputs 
 ###############################
@@ -24,7 +28,7 @@ print('Processing tile:', tile_of_interest)
 
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
 
-output_path = f'{wd}/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif'
+output_path = f'C:\\Users\\eleanor.downer\\OneDrive - Forest Research\\Documents\\TOW_Wales\\hedge_processing\\vom_pt1\\{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif'
 if os.path.exists(output_path):
     print(f'Output for tile {tile_of_interest} already exists. Exiting.')
     sys.exit()
@@ -46,7 +50,7 @@ if tile_footprint.empty:
 # Load VOM Pt1 CHM with NFI & NDVI masked
 #########################################
 
-print('Removing pixels below 0.5m from CHM')
+print('Loading VOM Pt1 rasters')
 
 chm_fp = f'{wd}/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI_NDVI.tif'
 
@@ -94,18 +98,21 @@ else:
 # Save to file - without NFI
 ####################################
 
-print('Saving VOM CHM with NDVI mask to file')
+print('Saving masked raster to file')
 
 out_meta.update({
     'width' : out_shape[1],
     'height' : out_shape[0],
     'crs' : chm_crs,
     'transform' : out_transform,
+    "dtype": "float32",
+    "compress": "LZW",
+    "tiled": True
 })
 
 chm_data = np.where(np.isnan(chm_data), -9999.0, chm_data)
 
-output_path = f'{wd}/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif'
+output_path = f'C:\\Users\\eleanor.downer\\OneDrive - Forest Research\\Documents\\TOW_Wales\\hedge_processing\\vom_pt1\\{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif'
 with rasterio.open(output_path, "w", **out_meta) as dst:
     dst.write(chm_data, 1)
 
