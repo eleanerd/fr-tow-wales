@@ -51,6 +51,10 @@ for hedge_file in hedge_files:
 
     dissolved['area_m2'] = dissolved.geometry.area.round(2)
 
+    # --- Remove small polygons ---
+    
+    dissolved = dissolved[dissolved['area_m2'] >= 20]
+
     # --- Save updated ---
     
     dissolved.to_file(
