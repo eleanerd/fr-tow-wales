@@ -24,10 +24,8 @@ library(smoothr)
 library(raster)
 library(foreach)
 library(doParallel)
-
 library(lwgeom)
 library(purrr)
-
 library(stringr)
 
 #################################################
@@ -86,6 +84,10 @@ files_list <- list.files("//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0
                         pattern = "_VOM_with_NFI_NDVI_BUA.tif$")
 tiles_list <- str_remove(files_list, "_VOM_with_NFI_NDVI_BUA.tif")
 
+# Register parallel backend
+cl <- makeCluster(detectCores() - 22) # Leave one core free
+registerDoParallel(cl)
+
 for (tile_of_interest in tiles_list) {
   
   print(tile_of_interest)
@@ -93,9 +95,13 @@ for (tile_of_interest in tiles_list) {
   if (file.exists(glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/hedges/{tile_of_interest}_hedges_v4.gpkg"))) {
     next
   }
+  
+  if (file.exists(glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/hedges/{tile_of_interest}_hedges.gpkg"))) {
+    next
+  }
     
   # Load CHM raster
-  chm_ndvi_filt <- rast(glue("0_VOM/with_nfi/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif") )
+  chm_ndvi_filt <- rast(glue("//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif") )
   chm_ndvi_filt[chm_ndvi_filt < 0.5] <- NA # Set values below 0.5m to NA
   
   ncol_chm <- ncol(chm_ndvi_filt)
@@ -107,8 +113,7 @@ for (tile_of_interest in tiles_list) {
     
   # Lists
   hedges_tiles <- list()
-  chm_tiles <- list()
-    
+  
   # Iterate over sections (~100 per 10km tile)
   for (row_start in seq(1, nrow_chm, by = section_size - overlap)) {
     for (col_start in seq(1, ncol_chm, by = section_size - overlap)) {
@@ -175,8 +180,8 @@ for (tile_of_interest in tiles_list) {
       terra::writeRaster(class_raster_mod, raster_fp, overwrite = TRUE)
   
       # GDAL Sieve
-      py_path <- "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\python.exe"
-      gdal_sieve <- "C:\\Program Files\\QGIS 3.44.3\\apps\\Python312\\Scripts\\gdal_sieve.exe"
+      py_path <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\python.exe"
+      gdal_sieve <- "C:\\Program Files\\QGIS 3.44.1\\apps\\Python312\\Scripts\\gdal_sieve.exe"
       #sieved_raster_fp <- glue("0_VOM/Hedges/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
       sieved_raster_fp <- glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/{tile_of_interest}_sieve_5m_class_raster_mod_{row_start}_{col_start}.tif")
       system(glue('"{gdal_sieve}" -st 5 -8 -of GTiff "{raster_fp}" "{sieved_raster_fp}"'))
@@ -197,6 +202,10 @@ for (tile_of_interest in tiles_list) {
         st_cast('POLYGON') %>% 
         st_as_sf() 
       
+      # Compute polygon areas for all canopy polygons
+      canopy_area$area_m <- as.numeric(st_area(canopy_area))
+      canopy_area <- canopy_area %>% filter(area_m >= 20)
+      
       # remove pixels over 6m
       filt6 <- terra::rast(sieved_raster_fp)
       msk6 <- filt6 == 2
@@ -206,16 +215,9 @@ for (tile_of_interest in tiles_list) {
       file.remove(raster_fp)
       file.remove(sieved_raster_fp)
       
-      # TO DO: parallelise this loop
       print("Finding hedges in polygons...")
   
-      # Register parallel backend
-      cl <- makeCluster(detectCores() - 1) # Leave one core free
-      registerDoParallel(cl)
-  
-      # Find hedges
-      #hedges <- NULL
-      #for (pol in seq_along(canopy_area$x)) {
+      # Find hedges{
       hedges_list <- foreach(
         pol = seq_along(canopy_area$x),
         .packages = c("sf",
@@ -228,12 +230,6 @@ for (tile_of_interest in tiles_list) {
       ) %dopar% {
   
         poly <- canopy_area$x[pol]
-        area <- as.numeric(st_area(poly))
-  
-        # Skip small polygons
-        if (area < 20) {
-          return(NULL)
-        }
   
         # Buffer inward by a small amount
         shrunk <- st_buffer(poly, -2.49, endCapStyle = "FLAT")
@@ -391,11 +387,7 @@ for (tile_of_interest in tiles_list) {
       } else {
         hedges <- NULL
       }
-      
-      # Clean up cluster after parallel work
-      stopCluster(cl)
-      registerDoSEQ()
-  
+    
       # Save outputs to lists
       if (!is.null(hedges) && nrow(hedges) > 0) {
         
@@ -420,3 +412,7 @@ for (tile_of_interest in tiles_list) {
   merged_hedges <- merged_hedges %>% mutate(across(where(is.numeric), ~ round(., 2)))
   st_write(merged_hedges, glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/hedges/{tile_of_interest}_hedges_v4.gpkg"), delete_dsn = TRUE)
 }
+
+# Clean up cluster after parallel work
+stopCluster(cl)
+registerDoSEQ()
