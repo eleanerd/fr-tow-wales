@@ -179,7 +179,7 @@ chm_data_ndvi_masked[chm_data_ndvi_masked < 2.5] = np.nan
 
 print('Masking out NFI Woodland from CHM')
 
-NFI_woodland_fp = f'{wd}/6_Wales_NFI_2023/NFI_Wales_2023_WoodlandOnly.gpkg'
+NFI_woodland_fp = f'{wd}/6_Wales_NFI_2024/NFI_Wales_2024_WoodlandOnly.gpkg'
 nfi_gdf = gpd.read_file(NFI_woodland_fp, bbox=tile_footprint)
 
 # Reproject NFI to match CHM 
@@ -199,6 +199,35 @@ nfi_mask = features.rasterize(
 nfi_mask = nfi_mask.astype(bool)
 #chm_data[nfi_mask] = np.nan
 chm_data_ndvi_masked[nfi_mask] = np.nan
+
+####################################
+# Remove Power Cables (OpenStreetMap)
+# Missed in Pt 1
+####################################
+
+power_lines_fp = f'{wd}/11_OpenStreetMap/osm_power_lines.gpkg'
+power_lines_gdf = gpd.read_file(power_lines_fp, bbox=tile_footprint)
+minor_lines_gdf = power_lines_gdf[power_lines_gdf['power'].isin(['minor_line'])]
+
+# Reproject to match CHM
+if minor_lines_gdf.crs != chm_crs:
+    minor_lines_gdf = minor_lines_gdf.to_crs(chm_crs)
+
+if minor_lines_gdf.empty:
+    print('No minor power lines to mask')
+else:
+    # Rasterise power lines
+    power_lines_mask = features.rasterize(
+        [(geom, 1) for geom in minor_lines_gdf.geometry],
+        out_shape=chm_data.shape, #out_shape=out_shape,
+        transform=chm_transform, #transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
+
+    # Mask power lines out of VOM
+    power_lines_mask = power_lines_mask.astype(bool)
+    chm_data_ndvi_masked[power_lines_mask] = np.nan
 
 ####################################
 # Remove clusters smaller than 5m2
