@@ -25,9 +25,6 @@ from skimage import morphology
 import warnings
 warnings.filterwarnings("ignore", message="More than one layer found")
 
-# To Do
-# Don't rasterize if gdf is empty - apply to all masks 
-
 ###############################
 # Settings / Inputs 
 ###############################
@@ -174,13 +171,17 @@ else:
     water_gdf["geometry"] = water_gdf.buffer(4)
     water_gdf = water_gdf[~water_gdf.is_empty]
 
-    water_mask = features.rasterize(
-        [(geom, 1) for geom in water_gdf.geometry],
-        out_shape=out_shape,
-        transform=out_transform,
-        fill=0,
-        dtype="uint8"
-    )
+    if water_gdf.empty:
+        water_mask = np.zeros(out_shape, dtype="uint8")
+    else:
+
+        water_mask = features.rasterize(
+            [(geom, 1) for geom in water_gdf.geometry],
+            out_shape=out_shape,
+            transform=out_transform,
+            fill=0,
+            dtype="uint8"
+        )
 
     # Apply water mask to CHM
     chm_data = np.where(water_mask == 1, np.nan, chm_data)
@@ -488,7 +489,7 @@ else:
 
     built_up_areas_mask = built_up_areas_mask.astype(bool)
 
-    chm_data[built_up_areas_mask] = np.nan
+    chm_data_ndvi_masked[built_up_areas_mask] = np.nan
 
 
 ####################################
