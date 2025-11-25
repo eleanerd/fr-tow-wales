@@ -13,7 +13,7 @@ hedge_dir = 'C:\\Users\\eleanor.downer\\OneDrive - Forest Research\\Documents\\T
 hedge_files = glob.glob(f'{hedge_dir}\\*_hedge*.gpkg')
 
 print("Loading built-up areas...")
-built_up_areas_gpkg = 'Y:\\Forest Inventory\\0700_NonCore_Funded\\0726_TOW_Wales\\04_Spatial Analysis\\1_Reference_Data\\13_OS_Built_Up_Areas\\OS_Open_Built_Up_Areas_GeoPackage\\os_open_built_up_areas.gpkg'
+built_up_areas_gpkg = 'Y:\\Forest Inventory\\0700_NonCore_Funded\\0726_TOW_Wales\\04_Spatial Analysis\\1_Reference_Data\\13_OS_Built_Up_Areas\\OS_Open_Built_Up_Areas_GeoPackage\\os_open_built_up_areas_wales.gpkg'
 built_up_areas = gpd.read_file(built_up_areas_gpkg, layer='os_open_built_up_areas')
 built_up_areas["geometry"] = built_up_areas.buffer(-10)
 built_up_areas_union = built_up_areas.union_all()
@@ -40,14 +40,12 @@ for hedge_file in hedge_files:
     hedges = hedges[~((hedges['straightness'] < 0.6) & (hedges['mbcp'] > 10))]
     hedges['geometry'] = hedges['geometry'].buffer(0)
 
-    # --- Remove hedges in built-up areas ---
-
-    print("Removing hedges in built-up areas...")
-
-    #hedges["geometry"] = hedges.geometry.apply(lambda g: g.difference(built_up_areas_union))
-
-    hedges = hedges.overlay(built_up_areas, how="difference")
-    hedges = hedges[~hedges.geometry.is_empty]
+    # --- Remove hedges in built-up areas --
+    # Only run for hegdes_v4 files (which contain built-up area hedges)
+    if 'hedges_v4' in hedge_file:
+        print("Removing hedges in built-up areas...")
+        hedges = hedges.overlay(built_up_areas, how="difference")
+        hedges = hedges[~hedges.geometry.is_empty]
 
     # --- Dissolve touching/overlapping polygons ---
 
