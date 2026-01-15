@@ -1,33 +1,36 @@
 ##################
 # Freddie Hunter
 # 03 Dec 2025
-# Wales TOW V3
+# Wales TOW
 #################
+
+# Review by Eleanor Downer on 15 Jan 2026
 
 # Assumptions
 # This code assumes that the input is a VOM with a minimum pixel cluster size of 5pixel.
-# The code also assumes that the VOM has been filtered with a minimum of 50cm 
-# The code also asumes that the VOM has NA values not zero values
+# The code also assumes that the VOM has been filtered with a minimum of 130cm 
+# The code also assumes that the VOM has NA values not zero values
 
 rm(list = ls())
-#############################################################
-# Input files
-# There are many parameters imbedded in the code. 
-wd <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/3_Test_Squares/test/"
-wd <- "C:/Users/freddie.hunter/Downloads/New folder/"
-raz_files <- 'SS79_CHM_1.3m_masked_NFI_OSSM_Cables.tif'
-NFI_Layer = "C:/Users/freddie.hunter/Downloads/NFI_Wales_2024_WoodlandOnly.gpkg"
-setwd(wd)
 
 #############################################################
-#Libraries
+
+# Input files
+# There are many parameters imbedded in the code. 
+working_dir <- "//forestresearch.gov.uk/shares/IFOS/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/"
+setwd(working_dir)
+
+chm_raster_path <- '04_Spatial Analysis/4_Processing/CHM_FILT/SS79_CHM_FILT.tif'
+nfi_layer_path  <- "1_Reference_Data/6_Wales_NFI_2024/NFI_Wales_2024_WoodlandOnly.gpkg"
+
+#############################################################
+# Libraries
 library(terra)
 library(dplyr)
 library(sf)
 library(raster)
 library(glue)
 library(deldir)
-library(dplyr)
 library(lidR)
 library(lwgeom)
 library(nngeo)
@@ -37,28 +40,32 @@ library(foreach)
 library(doParallel)
 
 #################################################
-#Processing
+# Processing
 
 # Load CHM raster
-chm <- terra::rast(raz_files)
+chm_raster <- terra::rast(chm_raster_path)
 
-# split into tiles
-tiles <- terra::makeTiles(chm, c(2000,2000))  
-flist <- list.files(wd, pattern = "^tile_[0-9]{1,3}\\.tif$", full.names = T)
+# Split into tiles
+chm_tiles <- terra::makeTiles(chm_raster, c(2000, 2000))  
+tile_file_list <- list.files(
+  "04_Spatial Analysis/4_Processing/CHM_FILT/",
+  pattern = "^tile_[0-9]{1,3}\\.tif$",
+  full.names = TRUE
+)
 
 ###############################
 ### Run first part in parallel
 ###############################
 
-numCores <- parallel::detectCores()
+num_cores <- parallel::detectCores()
 
 # Create a cluster
-cl <- makeCluster(numCores - 15)   # keep 1 core free
-registerDoParallel(cl)
+cluster <- makeCluster(num_cores - 15)
+registerDoParallel(cluster)
 
-# run method per sw
-new_data <- foreach(
-  i = 1:length(flist),
+# Run method per tile
+tile_results <- foreach(
+  tile_index = 1:length(tile_file_list),
   .packages = c(
     "sf",
     "dplyr",
@@ -73,350 +80,254 @@ new_data <- foreach(
     "smoothr",
     "purrr"
   ),
-  .export = c("flist", "NFI_Layer", "wd")
+  .export = c("tile_file_list", "nfi_layer_path", "working_dir")
 ) %dopar% {
   
-  raz_l <- flist[i]
+  tile_path <- tile_file_list[tile_index]
   
-  if(file.exists(glue("{wd}/filt_max_class_{raz_l}.tif"))){
+  if (file.exists(glue("{working_dir}/filt_max_class_{tile_path}.tif"))) {
     print('processed')
     next()
   }
   
-  chm <- rast(raz_l)
+  tile_chm <- rast(tile_path)
   
-  if (is.nan(minmax(chm)[2])){
+  if (is.nan(minmax(tile_chm)[2])) {
     print('no data exists')
     return(NULL)
   } else { 
     print('data exists')
   }
   
-  raz_l <- basename(raz_l) %>% stringr::str_remove('.tif')
-  # Step 1: 5x5 local maximum filter
-  # Assume cell size = 1m → 6x6 window = 6 cells
-  local_max <- terra::focal(chm,
-                            w = matrix(1, 5, 5),
-                            fun = max,
-                            na.rm = T)
+  tile_name <- basename(tile_path) %>% stringr::str_remove('.tif')
   
-  # set all NA values in original data back to NA to stop expansion by window
-  local_max[is.na(chm)] <- NA
+  # Step 1: 5x5 local maximum filter
+  local_max_raster <- terra::focal(
+    tile_chm,
+    w = matrix(1, 5, 5),
+    fun = max,
+    na.rm = TRUE
+  )
+  
+  # Restore NA mask
+  local_max_raster[is.na(tile_chm)] <- NA
   
   # Step 2: Initial height-based classification
-  # Reclassification matrix: start, end, new class
-  rcl <- matrix(
-    c(0.49, 10, 3, 10, 15, 10, 15, 20, 15, 20, 30, 20, 30, Inf, 30),
+  reclass_matrix <- matrix(
+    c(0.49, 10, 3,
+      10, 15, 10,
+      15, 20, 15,
+      20, 30, 20,
+      30, Inf, 30),
     ncol = 3,
     byrow = TRUE
   )
   
-  local_max <- as(local_max, "SpatRaster")
-  class_raster <- classify(local_max, rcl)
+  local_max_raster <- as(local_max_raster, "SpatRaster")
+  height_class_raster <- classify(local_max_raster, reclass_matrix)
   
-  # second round of filter for 5 clus with na set to 1
-  class_raster[is.na(class_raster)] <- 1
-  r_sieved_1 <- sieve(class_raster, threshold = 5, # minimum number of connected cells
-                      directions = 4)   # 4-connected (use 8 for diagonals))
-  
-  # second round of filter for 25clus size with 1 set na
-  r_sieved_1[r_sieved_1 == 1] <- NA
-  filt_max_class <- sieve(r_sieved_1, threshold = 25, # minimum number of connected cells
-                          directions = 4)   # 4-connected (use 8 for diagonals))
-  #writeRaster(filt_max_class, glue('{wd}/filt_max_class_{raz_files}'), overwrite=TRUE)
-  
-  # Tree detection
-  # get tree detection function
-  x <- c(3, 5, 10, 20)
-  y <- c(2, 2.6, 3.2, 5)
-  
-  model <- lm(log(y) ~ log(x))
-  a <- exp(coef(model)[1])
-  b <- coef(model)[2]
-  
-  # Define function
-  f <- function(x) a * x^b
-  
-  # Detect treetops using adaptive window size
-  # clean up CHM
-  fw <- matrix(nrow = 3, ncol = 3)
-  fw[is.na(fw)] <- 1
-  
-  chm[is.na(chm)] <- 0
-  chm_s <- terra::focal(
-    x = chm,
-    w = fw,
-    fun = mean,
-    na.rm = T
+  # First sieve (5 pixels)
+  height_class_raster[is.na(height_class_raster)] <- 1
+  sieved_class_small <- sieve(
+    height_class_raster,
+    threshold = 5,
+    directions = 4
   )
-  # set na values in filtt_max_class as na in chm_s
-  chm_s[is.na(filt_max_class)] <- NA
-  chm_s[chm_s < 0.5] <- NA
   
-  ttops <- locate_trees(chm_s, lmf(ws = f, shape = 'circular', hmin = 3))
+  # Second sieve (25 pixels)
+  sieved_class_small[sieved_class_small == 1] <- NA
+  filtered_height_class <- sieve(
+    sieved_class_small,
+    threshold = 25,
+    directions = 4
+  )
   
-  # change ttops crs to NFI crs #####
-  layer <- st_layers(NFI_Layer)
-  meta <- st_read(NFI_Layer, query = glue("SELECT * from {layer$name} LIMIT 1 OFFSET 1"))
+  # Tree detection model
+  window_heights <- c(3, 5, 10, 20)
+  window_sizes   <- c(2, 2.6, 3.2, 5)
   
-  # change tops crs
-  ttops <- st_transform(ttops, crs = st_crs(meta))
-  st_write(ttops, glue('{wd}/ttops_{raz_l}.gpkg'), append = F)
+  size_model <- lm(log(window_sizes) ~ log(window_heights))
+  model_a <- exp(coef(size_model)[1])
+  model_b <- coef(size_model)[2]
   
-  # Get crown extent for each tree.
-  # The crown extent height values can go as low as possible, this avoids cropping crowns at the 2.5m height, attributing total crown area to trees with height >= 3m.
-  # only pixels below 3m which do not directly correspond to a 3m or above tree's canopy.
-  crowns <- dalponte2016(chm = chm_s, treetops = ttops)()
-  # but we do want to ensure all VOM pixels equal and above 3 are included in the output.
-  crowns[chm_s >= 3] <- 2
+  adaptive_window <- function(x) model_a * x^model_b
   
-  # Make crowns binary
-  # avoid using 0 as gdal treats it as no data.
-  crowns[!is.na(crowns)] <- 2
-  crowns[is.na(crowns)] <- 1
+  # CHM smoothing
+  smoothing_window <- matrix(1, nrow = 3, ncol = 3)
   
-  # write crowns to file
-  #writeRaster(crowns, glue('{wd}/crowns_{raz_files}'), overwrite = T)
+  tile_chm[is.na(tile_chm)] <- 0
+  smoothed_chm <- terra::focal(
+    x = tile_chm,
+    w = smoothing_window,
+    fun = mean,
+    na.rm = TRUE
+  )
   
-  # filter out any pixel gaps smaller than 5m.
-  crowns_fllt <- sieve(as(crowns, 'SpatRaster'),
-                       threshold = 5,
-                       directions = 4)   # 4-connected (use 8 for diagonals))
-  #writeRaster(crowns_fllt, glue("{wd}/crowns_clus_5_{raz_files}"), overwrite = T)
+  smoothed_chm[is.na(filtered_height_class)] <- NA
+  smoothed_chm[smoothed_chm < 0.5] <- NA
   
-  # set areas that are not part of 3m tree crowns to zero in binary layer
-  filt_max_class[crowns_fllt == 1] <- NA
-  # Keep version with bins
-  filt_max_class_bins <- filt_max_class
+  treetops <- locate_trees(
+    smoothed_chm,
+    lmf(ws = adaptive_window, shape = 'circular', hmin = 3)
+  )
   
-  writeRaster(filt_max_class_bins,
-              glue("{wd}/filt_max_class_bins_{raz_l}.tif"),
-              overwrite = T)
+  # Transform treetops CRS
+  nfi_layers <- st_layers(nfi_layer_path)
+  nfi_meta   <- st_read(
+    nfi_layer_path,
+    query = glue("SELECT * from {nfi_layers$name} LIMIT 1 OFFSET 1")
+  )
   
-  # Now define woodland as binary
-  filt_max_class[!is.na(filt_max_class)] <- 1
+  treetops <- st_transform(treetops, crs = st_crs(nfi_meta))
+  st_write(
+    treetops,
+    glue('04_Spatial Analysis/4_Processing/TOW_POLYGONS/ttops_{tile_name}.gpkg'),
+    append = FALSE
+  )
   
-  # empty ram
-  vars_all = ls()
-  vars_all <- vars_all[!vars_all %in% c(
-    "filt_max_class",
-    "raz_l",
-    "wd", 
-    "NFI_Layer", 
-    "flist"
+  # Crown delineation
+  crown_raster <- dalponte2016(
+    chm = smoothed_chm,
+    treetops = treetops
+  )()
+  
+  crown_raster[smoothed_chm >= 3] <- 2
+  crown_raster[!is.na(crown_raster)] <- 2
+  crown_raster[is.na(crown_raster)] <- 1
+  
+  crown_raster_filled <- sieve(
+    as(crown_raster, 'SpatRaster'),
+    threshold = 5,
+    directions = 4
+  )
+  
+  filtered_height_class[crown_raster_filled == 1] <- NA
+  height_class_bins <- filtered_height_class
+  
+  writeRaster(
+    height_class_bins,
+    glue("04_Spatial Analysis/4_Processing/TOW_POLYGONS/filt_max_class_bins_{tile_name}.tif"),
+    overwrite = TRUE
+  )
+  
+  filtered_height_class[!is.na(filtered_height_class)] <- 1
+  
+  # Memory cleanup
+  objects_to_remove <- ls()
+  objects_to_remove <- objects_to_remove[!objects_to_remove %in% c(
+    "filtered_height_class",
+    "tile_name",
+    "working_dir", 
+    "nfi_layer_path", 
+    "tile_file_list"
   )]  
-  rm(list = vars_all)
+  rm(list = objects_to_remove)
   
-  #writeRaster(filt_max_class,
-  #            glue("{wd}/filt_max_class_{raz_l}.tif"),
-  #            overwrite = T)
-  
-  # set crs
-  layer <- st_layers(NFI_Layer)
-  meta <- st_read(NFI_Layer, query = glue("SELECT * from {layer$name} LIMIT 1 OFFSET 1"))
-  
-  # delineate canopy
-  canopy_area <- st_as_sf(
-    stars::st_as_stars(filt_max_class),
+  # Polygonize canopy
+  canopy_polygons <- st_as_sf(
+    stars::st_as_stars(filtered_height_class),
     point = FALSE,
     merge = TRUE,
     connect8 = TRUE
-  ) %>% st_union() %>%
+  ) %>%
+    st_union() %>%
     st_cast("POLYGON") %>%
-    st_transform(st_crs(meta))
+    st_transform(st_crs(nfi_meta))
   
-  # get bbx for NFI crop
-  dat_bbox <- st_bbox(canopy_area, crs = st_crs(canopy_area)) %>% st_as_sfc() %>% st_transform(st_crs(meta))
+  # ---- NFI OHC SECTION ----
   
-  # CHANGE TO LATEST NFI!!!
-  bbx_cutout <-
-    st_read(NFI_Layer) %>%
-    st_intersection(dat_bbox) %>%
-    st_as_sf() 
-  bbx_cutout <- bbx_cutout %>% st_collection_extract("POLYGON") %>% st_union() %>% st_cast('POLYGON') %>% st_as_sf()
+  canopy_bbox <- st_bbox(canopy_polygons, crs = st_crs(canopy_polygons)) %>%
+    st_as_sfc() %>%
+    st_transform(st_crs(nfi_meta))
   
-  if (isTRUE(dim(bbx_cutout)[0] != 0)){
-    bbx_cutout$ROWID <- c(1:dim(bbx_cutout)[1])
+  bbox_wkt <- st_as_text(canopy_bbox)
+  
+  nfi_crop <- st_read(
+    nfi_layer_path,
+    wkt_filter = bbox_wkt
+  ) %>%
+    st_collection_extract("POLYGON") %>%
+    st_union() %>%
+    st_cast('POLYGON') %>%
+    st_as_sf()
+  
+  if (nrow(nfi_crop) != 0) {
+    nfi_crop$ROWID <- seq_len(nrow(nfi_crop))
   } else {
-    bbx_cutout$ROWID <- NULL
+    nfi_crop$ROWID <- NULL
   }
   
-  # cut out nfi from TOW
-  canopy_area_nfirm <- st_difference(canopy_area, bbx_cutout)
+  canopy_minus_nfi <- st_difference(canopy_polygons, nfi_crop)
+  nfi_buffer_10m  <- nfi_crop %>% st_buffer(10)
   
-  # get nfi 10m buffer
-  NFI_10BUF <- bbx_cutout %>% st_buffer(10) 
+  nfi_ohc <- st_intersection(canopy_minus_nfi, nfi_buffer_10m) %>%
+    st_collection_extract("POLYGON") %>%
+    st_union() %>%
+    st_cast('POLYGON')
   
-  # set NFI OHC
-  NFI_OHC <- st_intersection(canopy_area_nfirm, NFI_10BUF) %>% st_collection_extract("POLYGON") %>% st_union() %>% st_cast('POLYGON')
-  NFI_OHC_F <- st_difference(NFI_OHC, bbx_cutout)  %>% st_union() %>% st_cast('POLYGON') %>% st_as_sf()
+  nfi_ohc_final <- st_difference(nfi_ohc, nfi_crop) %>%
+    st_union() %>%
+    st_cast('POLYGON') %>%
+    st_as_sf()
   
-  if (isTRUE(dim(NFI_OHC_F)[0] != 0)){
-    NFI_OHC_F$id <- c(1:dim(NFI_OHC_F)[1])
+  if (nrow(nfi_ohc_final) != 0) {
+    nfi_ohc_final$id <- seq_len(nrow(nfi_ohc_final))
   } else {
-    NFI_OHC_F$id <- NULL
+    nfi_ohc_final$id <- NULL
   }
   
-  # Keep if touching or overlapping original NFI
-  OL <- st_overlaps(NFI_OHC_F, bbx_cutout) %>% as.data.frame()
-  TC <- st_touches(NFI_OHC_F, bbx_cutout) %>% as.data.frame()
-  ids_keep <- rbind(OL, TC) %>% dplyr::select(row.id)
-  if (isTRUE(dim(ids_keep)[0] != 0)){
-    NFI_OHC_F <- NFI_OHC_F %>% filter(id %in% unlist(ids_keep))
+  overlaps <- st_overlaps(nfi_ohc_final, nfi_crop) %>% as.data.frame()
+  touches  <- st_touches(nfi_ohc_final, nfi_crop) %>% as.data.frame()
+  
+  keep_ids <- rbind(overlaps, touches) %>% dplyr::select(row.id)
+  
+  if (nrow(keep_ids) != 0) {
+    nfi_ohc_final <- nfi_ohc_final %>%
+      filter(id %in% unlist(keep_ids))
   }
-  NFI_OHC_F$area <- st_area(NFI_OHC_F) %>% units::drop_units()
-  NFI_OHC_F <- NFI_OHC_F[NFI_OHC_F$area >= 5,]
-  if (isTRUE(dim(ids_keep)[0] != 0)){
-    NFI_OHC_F$Woodland_Type <- 'NFI OHC'
-    
+  
+  nfi_ohc_final$area <- st_area(nfi_ohc_final) %>% units::drop_units()
+  nfi_ohc_final <- nfi_ohc_final[nfi_ohc_final$area >= 5, ]
+  
+  if (nrow(keep_ids) != 0) {
+    nfi_ohc_final$Woodland_Type <- 'NFI OHC'
   }
   
   # Remove OHC from TOW
-  NFI_OHC_F <- st_transform(NFI_OHC_F, st_crs(canopy_area))
-  canopy_area <- st_make_valid(canopy_area)
-  NFI_OHC_F   <- NFI_OHC_F %>% st_make_valid()
-  idx <- st_intersects(canopy_area, NFI_OHC_F) 
+  nfi_ohc_final <- st_transform(nfi_ohc_final, st_crs(canopy_polygons))
+  canopy_polygons <- st_make_valid(canopy_polygons)
+  nfi_ohc_final   <- st_make_valid(nfi_ohc_final)
   
-  result_geom <- map2(
-    st_geometry(canopy_area),
-    idx,
-    \(g, id) {
-      g <- st_sfc(g, crs = st_crs(canopy_area))  
-      if (length(id) == 0) {
-        return(g)   # keep original geometry
-      }
-      d <- st_difference(g, st_union(NFI_OHC_F[id, ]))
-      return(d)
+  intersect_idx <- st_intersects(canopy_polygons, nfi_ohc_final)
+  
+  tow_geoms <- map2(
+    st_geometry(canopy_polygons),
+    intersect_idx,
+    \(geom, ids) {
+      geom <- st_sfc(geom, crs = st_crs(canopy_polygons))
+      if (length(ids) == 0) return(geom)
+      st_difference(geom, st_union(nfi_ohc_final[ids, ]))
     }
   )
   
-  # 4. Bind results back with correct CRS
-  canopy_area_tow <- do.call(c, result_geom) %>% st_union() %>% st_cast('POLYGON') %>% st_as_sf()
+  canopy_tow <- do.call(c, tow_geoms) %>%
+    st_union() %>%
+    st_cast('POLYGON') %>%
+    st_as_sf()
   
-  # Write final NFI OHC area per tile
-  st_write(NFI_OHC_F, glue('{wd}/NFI_OHC_F_{raz_l}.gpkg'), append = F)
+  st_write(
+    nfi_ohc_final,
+    glue('04_Spatial Analysis/4_Processing/TOW_POLYGONS/NFI_OHC_F_{tile_name}.gpkg'),
+    append = FALSE
+  )
   
-  # Write final TOW area per tile
-  st_write(canopy_area_tow, glue('{wd}/canopy_area_tow_{raz_l}.gpkg'), append = F)
-  
+  st_write(
+    canopy_tow,
+    glue('04_Spatial Analysis/4_Processing/TOW_POLYGONS/canopy_area_tow_{tile_name}.gpkg'),
+    append = FALSE
+  )
 }
 
-stopCluster(cl)
-# END part 1
-########################################################################
+stopCluster(cluster)
 
-# Start Part 2
-
-# set crs
-layer <- st_layers(NFI_Layer)
-meta <- st_read(NFI_Layer, query = glue("SELECT * from {layer$name} LIMIT 1 OFFSET 1"))
-
-# merge tow canopy area
-cat <- list.files(wd, pattern = 'canopy_area_tow_tile_[0-9]{1,3}\\.gpkg$', full.names = T)
-cat_list <- lapply(cat, st_read, quiet = TRUE)
-cat_merged <- do.call(rbind, cat_list) %>% st_union() %>% st_cast('POLYGON') %>% st_as_sf()
-cat_merged$id <- 1:dim(cat_merged)[1]
-# Merge ttops
-ttops <- list.files(wd, pattern = 'ttops_tile_[0-9]{1,3}\\.gpkg$', full.names = T)
-ttops_list <- lapply(ttops, st_read, quiet = TRUE)
-ttops_merged <- do.call(rbind, ttops_list) 
-
-# Merge NFI_OHC_F
-nfi_ohc <- list.files(wd, pattern = 'NFI_OHC_F_tile_[0-9]{1,3}\\.gpkg$', full.names = T)
-nfi_ohc_list <- lapply(nfi_ohc, st_read, quiet = TRUE)
-nfi_ohc_merged <- do.call(rbind, nfi_ohc_list) %>% st_union() %>% st_cast('POLYGON')  %>% st_as_sf()
-
-# add trct to NFI OHC merged
-nfi_ohc_merged$id <- c(1:dim(nfi_ohc_merged)[1])
-NFI_OHC_F_trct <- st_intersection(nfi_ohc_merged,ttops_merged) %>% st_drop_geometry() %>% group_by(id) %>% summarise(trct = n())
-nfi_ohc_merged <- base::merge(nfi_ohc_merged, NFI_OHC_F_trct, by = 'id', all = TRUE )
-nfi_ohc_merged$trct[is.na(nfi_ohc_merged$trct)] <- 0
-
-# get atts for WT
-ttops_merged <- ttops_merged %>% st_transform(st_crs(meta))
-cat_merged$area <- st_area(cat_merged) %>% units::drop_units()
-cat_merged <- cat_merged[cat_merged$area >=5,]
-cat_merged$mbc <-  st_area(lwgeom::st_minimum_bounding_circle(cat_merged$x)) %>% units::drop_units()
-trct_dat <- st_intersection(cat_merged,ttops_merged) %>% st_drop_geometry() %>% group_by(id) %>% summarise(trct = n())
-cat_merged <- base::merge(cat_merged, trct_dat, by = 'id', all = TRUE )
-cat_merged$trct[is.na(cat_merged$trct)] <- 0
-cat_merged$mbc_p <- cat_merged$area/cat_merged$mbc * 100
-
-# set Woodland types
-wt_canopy <-
-  cat_merged %>% mutate(Woodland_Type = case_when((area >= 5 & area <= 350 & trct == 0 ~ 'Lone Tree'),
-                                                  (area >= 5 & area <= 350 & mbc_p >= 55 ~ 'Lone Tree'),
-                                                  (area >= 5 & trct == 1 ~ 'Lone Tree'),
-                                                  (area >= 5 & area <= 350 & trct == 2 & mbc_p >= 50 ~ 'Lone Tree'),
-                                                  (area >= 5 & area <= 1000 & trct > 1 ~ 'Group of Trees'),
-                                                  (area > 1000 ~ 'Small Woodland')))
-
-# Set any lone trees touching NFI OHC to Group of trees. 
-NFI_OHC_F_LT <- wt_canopy %>% filter(Woodland_Type == 'Lone Tree') %>% st_touches(nfi_ohc_merged) %>% as.data.frame()
-wt_canopy$Woodland_Type[wt_canopy$Woodland_Type == 'Lone Tree'][NFI_OHC_F_LT$row.id] <-  'Group of Trees'
-
-# Add back in NFI_OHC_F
-nfi_ohc_merged$mbc <- NA
-nfi_ohc_merged$mbc_p <- NA
-nfi_ohc_merged$Woodland_Type <- 'NFI OHC'
-nfi_ohc_merged$area <- st_area(nfi_ohc_merged) %>% units::drop_units()
-wt_canopy_f <- rbind(wt_canopy, nfi_ohc_merged)
-
-# clear out the ram
-#rm(list = c('ttops_merged', 'nfi_ohc_merged', 'cat_merged'))
-
-# add back in height bins
-# Merge rasters and polygonize
-filt_max_class_bins_list  <- list.files(wd, pattern = 'filt_max_class_bins_tile_[0-9]{1,3}\\.tif$', full.names = T)
-filt_max_class_bins_rlist <- lapply(filt_max_class_bins_list, rast)
-filt_max_class_bins_m <- do.call(merge, filt_max_class_bins_rlist) 
-
-# set areas that are not part of 3m tree crowns to zero. 
-filt_max_class_bins_p <- st_as_sf(
-  stars::st_as_stars(filt_max_class_bins_m),
-  point = FALSE,
-  connect8 = TRUE,
-  merge = TRUE) %>%
-  st_cast("POLYGON") %>%
-  st_transform(st_crs(meta))
-
-# now burn back in the bins to the main delineation
-# empty ram
-vars_all = ls()
-vars_all <- vars_all[!vars_all %in% c(
-  "wd",
-  "raz_l",
-  "wt_canopy_f", 
-  "filt_max_class_bins_p", 
-  "raz_files",
-  "vars_all",
-  "NFI_Layer"
-)]  
-rm(list = vars_all)
-
-all_canopy_bins <- st_intersection(wt_canopy_f, filt_max_class_bins_p) %>% st_collection_extract("POLYGON") %>% st_cast('POLYGON')
-all_canopy_bins$Bin_Area <- st_area(all_canopy_bins) %>% units::drop_units()
-
-# add height raster stats
-chm <- rast(glue("{wd}/{raz_files}"))
-ht_dat <- terra::extract(
-  chm,
-  all_canopy_bins,
-  fun = function(x) {
-    c(
-      min  = min(x, na.rm = TRUE),
-      mean = mean(x, na.rm = TRUE),
-      max  = max(x, na.rm = TRUE),
-      sd = sd(x, na.rm = TRUE)
-    )
-  }
-)
-
-all_canopy_bins$min_ht <- ht_dat[,2]
-all_canopy_bins$mean_ht <- ht_dat[,3]
-all_canopy_bins$max_ht <- ht_dat[,4]
-all_canopy_bins$sd_ht <- ht_dat[,5]
-names(all_canopy_bins) <- c('TOW_ID', 'Area_M', 'MBC', 'TRCT', 'MBC_P', 'Woodland_Type', 'HT_BIN', 'x', 'HT_BIN_AREA_M', 'HT_MIN', 'HT_MEAN', 'HT_MAX', 'HT_SD')
-st_write(all_canopy_bins, glue('{wd}/TOW_Wales_Canopy_{raz_files}.gpkg'), append = F)
-
-# end
+# End part 1
