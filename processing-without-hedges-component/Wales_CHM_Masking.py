@@ -30,7 +30,7 @@ warnings.filterwarnings("ignore", message="More than one layer found")
 ###############################
 
 #tile_of_interest = sys.argv[1] 
-tile_of_interest = 'SH57'  # For testing
+tile_of_interest = 'SS79'  # For testing
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis'
 
 output_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/CHM_FILT/{tile_of_interest}_CHM_FILT.tif'
