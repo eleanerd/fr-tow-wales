@@ -26,12 +26,12 @@ from skimage import morphology
 tile_of_interest = sys.argv[1] 
 wd = 'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data'
 
-print('Processing tile:', tile_of_interest)
+#print('Processing tile:', tile_of_interest)
 
 output_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt2/{tile_of_interest}_VOM.tif'
 
 if os.path.exists(output_path):
-    print(f'Output for tile {tile_of_interest} already exists. Exiting.')
+    #print(f'Output for tile {tile_of_interest} already exists. Exiting.')
     sys.exit()
 
 ###############################
@@ -48,7 +48,7 @@ tile_footprint = tile_footprint.set_crs('EPSG:27700')
 # Load in CHM
 #############################################
 
-chm_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/{tile_of_interest}_VOM_with_NFI.tif'
+chm_path = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1/Compressed_Rasters/{tile_of_interest}_VOM_with_NFI.tif'
 
 with rasterio.open(chm_path) as src:
     chm_data = src.read(1).astype('float32')
@@ -62,32 +62,37 @@ with rasterio.open(chm_path) as src:
 
 print('Masking out hedges')
 
-hedge_gpkg_fp = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/Hedges/{tile_of_interest}_hedges_dissolved.gpkg'
-hedge_gdf = gpd.read_file(hedge_gpkg_fp, bbox=tile_footprint)
+hedge_gpkg_fp = f'Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/Hedges/{tile_of_interest}_hedges.gpkg'
 
-# Reproject hedges to match CHM
-if hedge_gdf.crs != chm_crs:
-    hedge_gdf = hedge_gdf.to_crs(chm_crs)
+# Check if hedge file exists
+if not os.path.exists(hedge_gpkg_fp):
+    print(f'No hedge file found for tile {tile_of_interest}. Skipping hedge masking.')
+else:
+    hedge_gdf = gpd.read_file(hedge_gpkg_fp, bbox=tile_footprint)
 
-# Rasterise hedges
-hedge_mask = features.rasterize(
-    [(geom, 1) for geom in hedge_gdf.geometry],
-    out_shape=chm_data.shape, #out_shape=out_shape,
-    transform=chm_transform, #transform=out_transform,
-    fill=0,
-    dtype="uint8"
-)
+    # Reproject hedges to match CHM
+    if hedge_gdf.crs != chm_crs:
+        hedge_gdf = hedge_gdf.to_crs(chm_crs)
 
-# Mask hedges out of VOM
-hedge_mask = hedge_mask.astype(bool)
-chm_data[hedge_mask] = np.nan
+    # Rasterise hedges
+    hedge_mask = features.rasterize(
+        [(geom, 1) for geom in hedge_gdf.geometry],
+        out_shape=chm_data.shape, #out_shape=out_shape,
+        transform=chm_transform, #transform=out_transform,
+        fill=0,
+        dtype="uint8"
+    )
+
+    # Mask hedges out of VOM
+    hedge_mask = hedge_mask.astype(bool)
+    chm_data[hedge_mask] = np.nan
 
 ################################################
 # Mask out large, flat objects
 # (flat buildings/structures and gorse/shrub)
 ################################################
 
-print('Masking out flat top objects')
+#print('Masking out flat top objects')
 
 chm_var_path = f"{wd}/0_VOM/with_nfi/height_var/{tile_of_interest}_height_var.tif"
 
@@ -177,7 +182,7 @@ chm_data_ndvi_masked[chm_data_ndvi_masked < 2.5] = np.nan
 # Mask out NFI Woodland
 ####################################
 
-print('Masking out NFI Woodland from CHM')
+print('Masking out NFI Woodland')
 
 NFI_woodland_fp = f'{wd}/6_Wales_NFI_2024/NFI_Wales_2024_WoodlandOnly.gpkg'
 nfi_gdf = gpd.read_file(NFI_woodland_fp, bbox=tile_footprint)
@@ -187,11 +192,15 @@ if nfi_gdf.crs != chm_crs:
     nfi_gdf = nfi_gdf.to_crs(chm_crs)
 
 # Rasterise NFI
-nfi_mask = features.rasterize(
-    [(geom, 1) for geom in nfi_gdf.geometry],
-    out_shape=chm_data.shape, #out_shape=out_shape,
-    transform=chm_transform, #transform=out_transform,
-    fill=0,
+if nfi_gdf.empty:
+    print('No NFI woodland to mask')
+    nfi_mask = np.zeros(chm_data.shape, dtype='uint8')
+else:
+    nfi_mask = features.rasterize(
+        [(geom, 1) for geom in nfi_gdf.geometry],
+        out_shape=chm_data.shape, #out_shape=out_shape,
+        transform=chm_transform, #transform=out_transform,
+        fill=0,
     dtype="uint8"
 )
 
