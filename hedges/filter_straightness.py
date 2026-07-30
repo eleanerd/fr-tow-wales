@@ -9,7 +9,7 @@ import os
 # --- Inputs ---
 
 print("Loading hedge files...")
-hedge_dir = 'C:\\Users\\eleanor.downer\\OneDrive - Forest Research\\Documents\\TOW_Wales\\hedge_processing\\hedges'
+hedge_dir = 'C:\\Users\\eleanor.downer\\OneDrive - Forest Research\\Documents\\TOW_Wales\\hedge_processing\\hedges\\s2'
 hedge_files = glob.glob(f'{hedge_dir}\\*_hedge*.gpkg')
 
 print("Loading built-up areas...")

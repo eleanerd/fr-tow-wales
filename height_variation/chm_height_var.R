@@ -7,7 +7,7 @@ library(glue)
 library(plyr)
 library(sf)
 
-wd <- "Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/0_VOM/with_nfi"
+wd <- "Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/4_Processing/VOM_Processing/VOM_Pt1"
 
 # read in files
 chm_fns <- list.files(wd, pattern = "*with_NFI.tif$", full.names=TRUE)
@@ -18,9 +18,9 @@ window <- matrix(1, nrow = window_size, ncol = window_size)
 for (chm_fn in chm_fns) {
   
   tile <- strsplit(basename(chm_fn), "_")[[1]][[1]]
-  filepath <- glue("{wd}/height_var/{tile}_height_var.tif")
+  filepath <- glue("Y:/Forest Inventory/0700_NonCore_Funded/0726_TOW_Wales/04_Spatial Analysis/1_Reference_Data/0_VOM/with_nfi/height_var/{tile}_height_var.tif")
   
-  if (file.exists(filepath) {
+  if (file.exists(filepath)) {
     next
   }
   

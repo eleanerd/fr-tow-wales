@@ -80,7 +80,7 @@ max_rectangle_area <- function(length) {
 wd <- "C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing"
 setwd(wd)
 
-files_list <- list.files("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/vom_pt1",
+files_list <- list.files("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/vom_pt1/s2",
                         pattern = "_VOM_with_NFI_NDVI_BUA.tif$")
 tiles_list <- str_remove(files_list, "_VOM_with_NFI_NDVI_BUA.tif")
 
@@ -103,7 +103,7 @@ for (tile_of_interest in tiles_list) {
   #}
     
   # Load CHM raster
-  chm_ndvi_filt <- rast(glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/vom_pt1/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif") )
+  chm_ndvi_filt <- rast(glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/vom_pt1/s2/{tile_of_interest}_VOM_with_NFI_NDVI_BUA.tif") )
   chm_ndvi_filt[chm_ndvi_filt < 0.5] <- NA # Set values below 0.5m to NA
   
   ncol_chm <- ncol(chm_ndvi_filt)
@@ -415,7 +415,7 @@ for (tile_of_interest in tiles_list) {
   merged_hedges <- merged_hedges %>% mutate(across(where(is.numeric), ~ round(., 2)))
   
   
-  st_write(merged_hedges, glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/hedges/{tile_of_interest}_hedges.gpkg"), delete_dsn = TRUE)
+  st_write(merged_hedges, glue("C:/Users/eleanor.downer/OneDrive - Forest Research/Documents/TOW_Wales/hedge_processing/hedges/s2/{tile_of_interest}_hedges.gpkg"), delete_dsn = TRUE)
 }
 
 # Clean up cluster after parallel work
